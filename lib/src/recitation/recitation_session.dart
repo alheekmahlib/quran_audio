@@ -105,20 +105,34 @@ class RecitationSession {
     _recorder ??= AudioRecorder();
     _ownsRecorder = true;
 
-    // تحقق/اطلب صلاحية الميكروفون.
-    // TODO(platform): على iOS/Android يُفضّل طلب الصلاحية صراحةً عبر permission_handler.
+    // تحقق/اطلب صلاحية الميكروفون. record.hasPermission يطلب الإذن تلقائياً.
+    // Check/request mic permission. record.hasPermission requests it automatically.
     final hasMic = await _recorder!.hasPermission();
     if (!hasMic) {
       throw StateError('Microphone permission denied');
     }
 
-    // إعدادات التسجيل — Opus في WebM (يطابق نمط MediaRecorder في qurani.ai JS).
-    // TODO(qurani.ai): تأكد من الصيغة الدقيقة التي يقبلها الخادم (Opus/WebM vs PCM16).
-    const settings = RecordConfig(
-      encoder: AudioEncoder.opus,
-      sampleRate: 48000,
+    // إعدادات التسجيل. وضع التسجيل المتدفّق (startStream) على iOS/Android يدعم
+    // PCM فقط (لا يدعم Opus/AAC في الـ streaming — يلزم تسجيل لِملف). لذلك
+    // نستخدم pcm16 أحادي القناة بِمعدّل 16kHz (مطابق لِمتطلبات معظم نماذج ASR).
+    //
+    // Recording settings. The streaming mode (startStream) on iOS/Android only
+    // supports PCM (no Opus/AAC in streaming — that requires file recording).
+    // So we use mono pcm16 at 16kHz (matches most ASR model requirements).
+    //
+    // TODO(qurani.ai): إن تطلّب الخادم صيغة ضغط (Opus/WebM)، يمكن التحويل لِملف
+    // مؤقت ثم بثّه، أو استخدام حزمة ffmpeg لِإعادة الترميز. راجع وثائق الخادم.
+    //
+    // TODO(qurani.ai): if the server requires compressed audio (Opus/WebM),
+    // consider writing to a temp file then streaming it, or use an ffmpeg
+    // package to re-encode. Check the server docs.
+    final settings = RecordConfig(
+      encoder: AudioEncoder.pcm16bits,
+      sampleRate: 16000,
       numChannels: 1,
-      bitRate: 64000,
+      autoGain: true,
+      echoCancel: true,
+      noiseSuppress: true,
     );
 
     // ابثث القطع الثنائية عبر WS.
