@@ -78,6 +78,7 @@ class _RecitationTabState extends State<RecitationTab> {
     }
 
     setState(_feedbacks.clear);
+    _isRecording.value = true; // فور بدء الجلسة (لِتحويل الزر لِـ إيقاف)
     _session = Recitation.createSession(
       config: QrcConfig(chapterIndex: _surah, verseIndex: _ayah),
     );
@@ -88,6 +89,7 @@ class _RecitationTabState extends State<RecitationTab> {
       _isRecording.value = s == RecitationState.recording;
       _sessionState.value = s; // عكس الحالة لِقراءة آمنة في Obx
       if (s.isError) {
+        _isRecording.value = false;
         Get.snackbar('خطأ', _session!.lastError.value,
             snackPosition: SnackPosition.BOTTOM);
       }
@@ -96,9 +98,9 @@ class _RecitationTabState extends State<RecitationTab> {
   }
 
   Future<void> _stopSession() async {
+    _isRecording.value = false; // فوراً لِتحويل الزر
     await _session?.stop();
     _sessionState.value = RecitationState.finished;
-    _isRecording.value = false;
   }
 
   @override
