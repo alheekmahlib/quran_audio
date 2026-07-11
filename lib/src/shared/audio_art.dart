@@ -1,12 +1,12 @@
 import 'dart:developer' show log;
-import 'dart:io' show File;
+import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:path_provider/path_provider.dart';
 
 import '../constants/quran_constants.dart';
 import 'media_item_builder.dart';
+import 'platform_io.dart';
 
 /// إدارة أيقونة الإشعارات (artUri) المعروضة في شاشة القفل/البلوتوث.
 ///
@@ -41,15 +41,17 @@ class AudioArt {
         return;
       }
 
-      // انسخ ملف الـ asset إلى مجلد مؤقت.
-      // Copy the asset file to a temp directory.
+      // انسخ ملف الـ asset إلى مجلد مؤقت عبر PlatformIo (لا dart:io مباشرة).
+      // Copy the asset file to a temp directory via PlatformIo (no direct dart:io).
       final byteData = await rootBundle.load(assetPath);
-      final tempDir = await getTemporaryDirectory();
+      final tempDir = await PlatformIo.tempDir;
       final fileName = assetPath.split('/').last;
-      final file = File('${tempDir.path}/$fileName');
-      await file.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
+      final filePath = '$tempDir/$fileName';
+      final bytes =
+          byteData.buffer.asUint8List(byteData.offsetInBytes, byteData.lengthInBytes);
+      await PlatformIo.writeFile(filePath, Uint8List.fromList(bytes));
 
-      MediaItemBuilder.appIconUri = Uri.file(file.path);
+      MediaItemBuilder.appIconUri = Uri.file(filePath);
       await MediaItemBuilder.refreshCurrentMediaItem();
       log('AudioArt set from asset: $assetPath', name: 'AudioArt');
     } catch (e, s) {
@@ -81,9 +83,8 @@ class AudioArt {
   /// Set the icon from a local file path on the device.
   static Future<void> setFromFile(String filePath) async {
     if (kIsWeb) return;
-    final file = File(filePath);
-    if (await file.exists()) {
-      MediaItemBuilder.appIconUri = Uri.file(file.path);
+    if (await PlatformIo.fileExists(filePath)) {
+      MediaItemBuilder.appIconUri = Uri.file(filePath);
       await MediaItemBuilder.refreshCurrentMediaItem();
       log('AudioArt set from file: $filePath', name: 'AudioArt');
     } else {

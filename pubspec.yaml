@@ -25,6 +25,9 @@ dependencies:
   path_provider: ^2.1.6
   # دمج الـ streams / Stream combination
   rxdart: ^0.28.0
+  # فك ضغط gzip عبر كل المنصات (بديل dart:io gzip غير المتوفر على الويب)
+  # Cross-platform gzip (replaces dart:io gzip which is unavailable on web)
+  archive: ^4.0.0
 
 dev_dependencies:
   flutter_test:
@@ -35,3 +38,12 @@ flutter:
   assets:
     - assets/jsons/
     - assets/images/
+
+# إعلان المنصات المدعومة رسمياً على pub.dev / Declares supported platforms
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  web:
+  windows:

@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:developer' show log;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'package:rxdart/rxdart.dart' as r;
 
 import '../enums/playback_mode.dart';
 import '../shared/models/position_data.dart';
+import '../shared/platform_io.dart';
 
 /// المحرك الصوتي المشترك — يملك نسخة `AudioPlayer` واحدة وينسّق بين نظامي السور والآيات.
 ///
@@ -56,10 +59,31 @@ class AudioEngine {
   /// هيّئ المشغّل (يُستدعى مرة واحدة من الكنترولر الأول).
   /// Initialize the player (called once by the first controller).
   ///
-  /// ملاحظة: عند استيراد `just_audio_media_kit` في pubspec.yaml فإنه
-  /// يُسجّل نفسه تلقائياً لدعم سطح المكتب (macOS/Windows/Linux).
+  /// على Windows/Linux، يُهيّئ media_kit كـ backend لـ just_audio قبل إنشاء
+  /// أي AudioPlayer (مطلوب صراحةً في الإصدار 2.1.0). macOS يستخدم backend
+  /// AVAudioPlayer النظامي لـ just_audio مباشرةً (لا يحتاج media_kit).
+  /// على الويب، يستخدم just_audio backend الويب الخاص به.
+  ///
+  /// On Windows/Linux, initializes media_kit as the just_audio backend before
+  /// any AudioPlayer is constructed (required explicitly in v2.1.0). macOS uses
+  /// just_audio's native AVAudioPlayer backend directly (no media_kit needed).
+  /// On web, just_audio uses its own web backend.
   Future<void> init() async {
     if (_initialized) return;
+    if (!kIsWeb && (PlatformIo.isWindows || PlatformIo.isLinux)) {
+      try {
+        JustAudioMediaKit.ensureInitialized(
+          windows: PlatformIo.isWindows,
+          linux: PlatformIo.isLinux,
+        );
+        log('media_kit backend initialized '
+            '(windows=${PlatformIo.isWindows}, linux=${PlatformIo.isLinux})',
+            name: 'AudioEngine');
+      } catch (e, s) {
+        log('Failed to init media_kit backend: $e',
+            name: 'AudioEngine', stackTrace: s);
+      }
+    }
     _initialized = true;
     log('AudioEngine initialized', name: 'AudioEngine');
   }

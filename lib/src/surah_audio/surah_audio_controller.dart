@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:developer' show log;
-import 'dart:io' show File;
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../constants/quran_constants.dart';
 import '../constants/storage_keys.dart';
@@ -19,6 +17,7 @@ import '../shared/download_service.dart';
 import '../shared/media_item_builder.dart';
 import '../shared/models/reader_info.dart';
 import '../shared/models/position_data.dart';
+import '../shared/platform_io.dart';
 import '../shared/quran_metadata.dart';
 import '../shared/repeat_controller.dart';
 import 'surah_readers.dart';
@@ -108,7 +107,7 @@ class SurahAudioController extends GetxController {
     _loadLastListen();
 
     if (!kIsWeb) {
-      _docsDir = (await getApplicationDocumentsDirectory()).path;
+      _docsDir = await PlatformIo.documentsDir;
     }
 
     // سجّل callbacks جسر الإشعارات / register notification handler callbacks
@@ -269,7 +268,7 @@ class SurahAudioController extends GetxController {
       reader: reader,
     );
 
-    if (await File(localPath).exists()) {
+    if (await PlatformIo.fileExists(localPath)) {
       await _engine.player.setAudioSource(
         AudioSource.file(localPath, tag: _mediaItem(surahNumber)),
       );
@@ -448,7 +447,7 @@ class SurahAudioController extends GetxController {
       surahNumber: surahNumber,
       reader: reader,
     );
-    return File(localPath).exists();
+    return PlatformIo.fileExists(localPath);
   }
 
   /// احذف ملف السورة المحمّل / Delete a downloaded surah file.

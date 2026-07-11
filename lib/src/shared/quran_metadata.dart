@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:developer' show log;
-import 'dart:io' show gzip;
 
+import 'package:archive/archive.dart' show GZipDecoder;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 
@@ -51,8 +51,9 @@ class QuranMetadata {
       final bytes = byteData.buffer.asUint8List(
           byteData.offsetInBytes, byteData.lengthInBytes);
 
-      // فك ضغط gzip / decompress gzip
-      final decoded = gzip.decode(bytes);
+      // فك ضغط gzip عبر حزمة archive (متوافقة مع كل المنصات بما فيها الويب)
+      // Decompress gzip via the archive package (works on all platforms incl. web)
+      final decoded = const GZipDecoder().decodeBytes(bytes);
       final jsonStr = utf8.decode(decoded);
       final data = json.decode(jsonStr) as Map<String, dynamic>;
       final list = data['surahs'] as List<dynamic>;

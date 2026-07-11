@@ -109,6 +109,31 @@ macOS requires a network entitlement. Open `macos/Runner/DebugProfile.entitlemen
 <true/>
 ```
 
+> ⚠️ Also add the same key to `macos/Runner/Release.entitlements`, otherwise release builds cannot reach the network for audio streaming.
+
+The library works out of the box on macOS (just_audio uses the native AVAudioPlayer backend). The minimum deployment target should be macOS 11.0.
+
+#### Windows & Linux
+No manual setup is required. The library automatically initializes the `media_kit` audio backend on Windows and Linux via `just_audio_media_kit` during `QuranAudio.init()`. Just run:
+
+```bash
+flutter run -d windows   # or -d linux
+```
+
+> **Note:** System media notifications (lock-screen controls) are not available on Windows, Linux, or macOS — this is an `audio_service` limitation. Audio playback itself works fully on all desktop platforms.
+
+#### Web
+The library works on web in **streaming-only mode** (no offline downloads, since browsers have no file system). `QuranAudio.init()` handles everything automatically:
+
+```bash
+flutter run -d chrome
+```
+
+- ✅ Play surahs & ayahs (streamed from network URLs)
+- ✅ Reciter selection, repeat modes, playback controls
+- ❌ Offline downloads (not possible on web — use streaming instead)
+- ❌ System media notifications (not supported on web by `audio_service`)
+
 ### Installation
 
 In the `pubspec.yaml` of your flutter project, add the following dependency:

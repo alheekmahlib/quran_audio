@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:developer' show log;
-import 'dart:io' show File;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../constants/quran_constants.dart';
 import '../constants/storage_keys.dart';
@@ -18,6 +16,7 @@ import '../shared/download_service.dart';
 import '../shared/media_item_builder.dart';
 import '../shared/models/reader_info.dart';
 import '../shared/models/position_data.dart';
+import '../shared/platform_io.dart';
 import '../shared/quran_metadata.dart';
 import '../shared/repeat_controller.dart';
 import 'ayah_readers.dart';
@@ -120,7 +119,7 @@ class AyahAudioController extends GetxController {
     readerIndex.value = _box.read(StorageKeys.ayahReaderIndex) ?? 0;
 
     if (!kIsWeb) {
-      _docsDir = (await getApplicationDocumentsDirectory()).path;
+      _docsDir = await PlatformIo.documentsDir;
     }
 
     _registerAudioHandlerCallbacks();
@@ -454,7 +453,7 @@ class AyahAudioController extends GetxController {
       reader: reader,
     );
 
-    if (await File(localPath).exists()) {
+    if (await PlatformIo.fileExists(localPath)) {
       return AudioSource.file(localPath, tag: tag);
     } else {
       // غير محمّل — بث مباشر / not downloaded — stream
@@ -580,7 +579,7 @@ class AyahAudioController extends GetxController {
       ayahInSurah: ayahInSurah,
       reader: reader,
     );
-    return File(localPath).exists();
+    return PlatformIo.fileExists(localPath);
   }
 
   /// هل جميع آيات السورة محمّلة؟ / Are all ayahs of a surah downloaded?
@@ -602,7 +601,7 @@ class AyahAudioController extends GetxController {
         ayahInSurah: ayah,
         reader: reader,
       );
-      if (!await File(localPath).exists()) {
+      if (!await PlatformIo.fileExists(localPath)) {
         _box.write(
           StorageKeys.surahAyahsDownloadedKey(surahNumber, readerIndex.value),
           false,

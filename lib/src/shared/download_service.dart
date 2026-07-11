@@ -1,17 +1,20 @@
 import 'dart:developer' show log;
-import 'dart:io' show File, HttpHeaders;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
-import 'package:path/path.dart' as p show dirname;
-import 'dart:io' show Directory;
+
+import 'platform_io.dart';
 
 /// خدمة تحميل ملفات الصوت — منطق مشترك بين نظامي السور والآيات.
 ///
 /// Audio file download service — shared logic for both surah and ayah systems.
 ///
 /// تستخدم Dio للتحميل مع دعم الإلغاء (CancelToken) وتتبع التقدّم عبر Rx.
+/// على الويب: جميع عمليات الملفات no-op (لا نظام ملفات).
+///
+/// Uses Dio for downloads with cancel support (CancelToken) and Rx progress.
+/// On web: all file operations are no-ops (no file system).
 class DownloadService {
   DownloadService();
 
@@ -36,10 +39,6 @@ class DownloadService {
   /// حمّل ملفاً إن لم يكن موجوداً محلياً / Download a file if not present locally.
   ///
   /// يعيد المسار المحلي للملف (موجود أو مُحمّل حديثاً).
-  /// [url] - رابط الملف.
-  /// [localPath] - المسار المحلي الكامل.
-  /// [onProgress] - رد نداء اختياري للتقدّم.
-  ///
   /// Returns the local path. Returns null on web (no local files).
   Future<String?> downloadIfNotExists({
     required String url,
@@ -48,13 +47,11 @@ class DownloadService {
   }) async {
     if (kIsWeb) return null; // لا تنزيلات محلية على الويب
 
-    final file = File(localPath);
-    if (await file.exists()) {
+    if (await PlatformIo.fileExists(localPath)) {
       return localPath; // موجود مسبقاً
     }
 
-    // تأكد من وجود المجلد الأب
-    await _ensureParentDir(localPath);
+    await PlatformIo.ensureParentDir(localPath);
 
     try {
       await _download(
@@ -76,7 +73,7 @@ class DownloadService {
     void Function(int received, int total)? onProgress,
   }) async {
     if (kIsWeb) return false;
-    await _ensureParentDir(localPath);
+    await PlatformIo.ensureParentDir(localPath);
     return _download(
       url: url,
       localPath: localPath,
@@ -97,9 +94,10 @@ class DownloadService {
 
     try {
       // احصل على حجم الملف عبر HEAD / get file size via HEAD
+      // (Headers.contentLengthHeader من dio — لا يحتاج dart:io)
       try {
         final head = await _dio.head(url);
-        final len = head.headers.value(HttpHeaders.contentLengthHeader);
+        final len = head.headers.value(Headers.contentLengthHeader);
         if (len != null) fileSize.value = int.parse(len);
       } catch (_) {
         // تجاهل فشل الحصول على الحجم
@@ -111,7 +109,8 @@ class DownloadService {
         onReceiveProgress: (received, total) {
           if (total > 0) {
             progress.value = received / total;
-            progressString.value = ((received / total) * 100).toStringAsFixed(0);
+            progressString.value =
+                ((received / total) * 100).toStringAsFixed(0);
             downloadedBytes.value = received;
           }
           onProgress?.call(received, total);
@@ -127,12 +126,10 @@ class DownloadService {
       if (e.type == DioExceptionType.cancel) {
         log('Download cancelled: $url', name: 'DownloadService');
         // احذف الملف الجزئي
-        try {
-          final f = File(localPath);
-          if (await f.exists()) await f.delete();
-        } catch (_) {}
+        await PlatformIo.deleteFile(localPath);
       } else {
-        log('Download error (${e.type}): ${e.message}', name: 'DownloadService');
+        log('Download error (${e.type}): ${e.message}',
+            name: 'DownloadService');
       }
       return false;
     } catch (e) {
@@ -160,7 +157,7 @@ class DownloadService {
   Future<bool> fileExists(String localPath) async {
     if (kIsWeb) return false;
     try {
-      return File(localPath).exists();
+      return PlatformIo.fileExists(localPath);
     } catch (_) {
       return false;
     }
@@ -170,18 +167,9 @@ class DownloadService {
   Future<void> deleteFile(String localPath) async {
     if (kIsWeb) return;
     try {
-      final f = File(localPath);
-      if (await f.exists()) await f.delete();
+      await PlatformIo.deleteFile(localPath);
     } catch (e) {
       log('Failed to delete $localPath: $e', name: 'DownloadService');
-    }
-  }
-
-  Future<void> _ensureParentDir(String filePath) async {
-    try {
-      await Directory(p.dirname(filePath)).create(recursive: true);
-    } catch (e) {
-      log('Failed to create parent dir: $e', name: 'DownloadService');
     }
   }
 
