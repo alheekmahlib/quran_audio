@@ -150,8 +150,16 @@ class SurahAudioController extends GetxController {
 
   /// شغّل سورة كاملة / Play a full surah.
   ///
+  /// شغّل سورة كاملة (ملف MP3 واحد).
+  ///
   /// [surahNumber] - رقم السورة (1..114).
-  Future<void> playSurah({required int surahNumber}) async {
+  /// [streamFirst] - true (الافتراضي): بث مباشر فوراً إن لم يكن الملف محمّلاً.
+  /// [downloadFirst] - true: حمّل السورة كاملة قبل التشغيل (يسود على streamFirst).
+  Future<void> playSurah({
+    required int surahNumber,
+    bool streamFirst = true,
+    bool downloadFirst = false,
+  }) async {
     if (!QuranMetadata.instance.isValidSurah(surahNumber)) {
       log('Invalid surah number: $surahNumber', name: 'SurahAudioController');
       return;
@@ -162,6 +170,17 @@ class SurahAudioController extends GetxController {
 
     isPreparing.value = true;
     currentSurahNumber.value = surahNumber;
+
+    // إن طُلب التحميل قبل التشغيل (المنصات الأصلية فقط).
+    // If download-first was requested (native only).
+    if (downloadFirst && !kIsWeb) {
+      try {
+        await downloadSurah(surahNumber);
+      } catch (e, s) {
+        log('playSurah: pre-download failed, falling back to stream: $e',
+            name: 'SurahAudioController', stackTrace: s);
+      }
+    }
 
     try {
       await _setAudioSource(surahNumber);

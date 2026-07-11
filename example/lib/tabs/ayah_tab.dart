@@ -10,14 +10,37 @@ import 'package:quran_audio/quran_audio.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
-class AyahTab extends StatelessWidget {
+/// خيارات سلوك التشغيل / Playback behavior options.
+enum _PlayBehavior {
+  /// بث مباشر فوراً / Stream immediately.
+  stream,
+  /// حمّل الآية ثم شغّلها / Download single ayah then play.
+  downloadAyah,
+  /// حمّل كل آيات السورة ثم شغّلها / Download whole surah then play.
+  downloadSurah,
+}
+
+class AyahTab extends StatefulWidget {
   const AyahTab({super.key});
 
   @override
+  State<AyahTab> createState() => _AyahTabState();
+}
+
+class _AyahTabState extends State<AyahTab> {
+  final _surahCtrl = TextEditingController(text: '2');
+  final _ayahCtrl = TextEditingController(text: '255');
+  _PlayBehavior _behavior = _PlayBehavior.stream;
+
+  @override
+  void dispose() {
+    _surahCtrl.dispose();
+    _ayahCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // متحكمات الإدخال اليدوي / Manual input controllers
-    final surahCtrl = TextEditingController(text: '2');
-    final ayahCtrl = TextEditingController(text: '255');
     final c = QuranAudio.ayahController;
 
     return ListView(
@@ -54,7 +77,7 @@ class AyahTab extends StatelessWidget {
                   // رقم السورة / Surah number
                   Expanded(
                     child: TextField(
-                      controller: surahCtrl,
+                      controller: _surahCtrl,
                       keyboardType: TextInputType.number,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                       decoration: const InputDecoration(
@@ -68,7 +91,7 @@ class AyahTab extends StatelessWidget {
                   // رقم الآية / Ayah number
                   Expanded(
                     child: TextField(
-                      controller: ayahCtrl,
+                      controller: _ayahCtrl,
                       keyboardType: TextInputType.number,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                       decoration: const InputDecoration(
@@ -106,6 +129,43 @@ class AyahTab extends StatelessWidget {
                               : AppColors.textSecondary),
                     ),
                   )),
+              const SizedBox(height: 10),
+              // سلوك التشغيل: بث مباشر / تحميل آية / تحميل سورة
+              // Playback behavior: stream / download ayah / download surah
+              const Text('سلوك التشغيل / Playback Mode',
+                  style: TextStyle(
+                      color: AppColors.textSecondary, fontSize: 12)),
+              const SizedBox(height: 6),
+              SegmentedButton<_PlayBehavior>(
+                segments: const [
+                  ButtonSegment(
+                      value: _PlayBehavior.stream,
+                      icon: Icon(Icons.cloud_rounded, size: 16),
+                      label: Text('بث مباشر')),
+                  ButtonSegment(
+                      value: _PlayBehavior.downloadAyah,
+                      icon: Icon(Icons.download_rounded, size: 16),
+                      label: Text('تحميل آية')),
+                  ButtonSegment(
+                      value: _PlayBehavior.downloadSurah,
+                      icon: Icon(Icons.download_for_offline_rounded, size: 16),
+                      label: Text('تحميل سورة')),
+                ],
+                selected: {_behavior},
+                onSelectionChanged: (v) => setState(() => _behavior = v.first),
+                style: ButtonStyle(
+                  backgroundColor: WidgetStateProperty.resolveWith((states) =>
+                      states.contains(WidgetState.selected)
+                          ? AppColors.accent.withValues(alpha: 0.2)
+                          : AppColors.surfaceLight),
+                  foregroundColor: WidgetStateProperty.resolveWith((states) =>
+                      states.contains(WidgetState.selected)
+                          ? AppColors.accent
+                          : AppColors.textSecondary),
+                  textStyle: WidgetStateProperty.all(
+                      const TextStyle(fontSize: 11)),
+                ),
+              ),
               const SizedBox(height: 14),
               // زر التشغيل / Play button
               SizedBox(
@@ -113,8 +173,8 @@ class AyahTab extends StatelessWidget {
                 height: 50,
                 child: FilledButton.icon(
                   onPressed: () {
-                    final s = int.tryParse(surahCtrl.text) ?? 0;
-                    final a = int.tryParse(ayahCtrl.text) ?? 0;
+                    final s = int.tryParse(_surahCtrl.text) ?? 0;
+                    final a = int.tryParse(_ayahCtrl.text) ?? 0;
                     if (!QuranAudio.metadata.isValidSurah(s)) {
                       Get.snackbar('خطأ', 'رقم السورة يجب أن يكون 1 - 114',
                           snackPosition: SnackPosition.BOTTOM);
@@ -130,6 +190,11 @@ class AyahTab extends StatelessWidget {
                       surah: s,
                       ayah: a,
                       singleAyah: c.playSingleAyah.value,
+                      streamFirst: _behavior == _PlayBehavior.stream,
+                      downloadFirst: _behavior != _PlayBehavior.stream,
+                      downloadScope: _behavior == _PlayBehavior.downloadSurah
+                          ? DownloadScope.surah
+                          : DownloadScope.single,
                     );
                   },
                   icon: const Icon(Icons.play_arrow_rounded),
@@ -145,10 +210,10 @@ class AyahTab extends StatelessWidget {
               const SizedBox(height: 8),
               // عرض معلومات الآية المدخلة / Show input ayah info
               ValueListenableBuilder<TextEditingValue>(
-                valueListenable: surahCtrl,
+                valueListenable: _surahCtrl,
                 builder: (context, surahVal, _) {
                   return ValueListenableBuilder<TextEditingValue>(
-                    valueListenable: ayahCtrl,
+                    valueListenable: _ayahCtrl,
                     builder: (context, ayahVal, _) {
                       final s = int.tryParse(surahVal.text) ?? 0;
                       final a = int.tryParse(ayahVal.text) ?? 0;

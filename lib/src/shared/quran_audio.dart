@@ -5,6 +5,7 @@ import 'package:get_storage/get_storage.dart';
 
 import '../ayah_audio/ayah_audio_controller.dart';
 import '../engine/audio_engine.dart';
+import '../enums/download_scope.dart';
 import '../enums/playback_mode.dart';
 import '../enums/repeat_mode.dart';
 import '../shared/models/position_data.dart';
@@ -176,21 +177,44 @@ class QuranAudio {
   /// شغّل سورة كاملة (ملف MP3 واحد) / Play a full surah.
   ///
   /// [surahNumber] - رقم السورة (1..114).
-  static Future<void> playSurah(int surahNumber) =>
-      SurahAudioController.instance.playSurah(surahNumber: surahNumber);
+  /// [streamFirst] - true (الافتراضي): بث مباشر فوراً إن لم يكن الملف محمّلاً.
+  /// [downloadFirst] - true: حمّل السورة كاملة قبل التشغيل.
+  static Future<void> playSurah(
+    int surahNumber, {
+    bool streamFirst = true,
+    bool downloadFirst = false,
+  }) =>
+      SurahAudioController.instance.playSurah(
+        surahNumber: surahNumber,
+        streamFirst: streamFirst,
+        downloadFirst: downloadFirst,
+      );
 
   /// شغّل آية محددة (ملف MP3 لكل آية) / Play a specific ayah.
   ///
   /// [surah] - رقم السورة (1..114).
   /// [ayah] - رقم الآية ضمن السورة.
   /// [singleAyah] - true: آية واحدة فقط / false: يتابع للآيات التالية.
+  /// [streamFirst] - true (الافتراضي): بث مباشر فوراً إن لم يكن الملف محمّلاً.
+  /// [downloadFirst] - true: حمّل الآية/السورة أولاً ثم شغّلها (يسود على streamFirst).
+  /// [downloadScope] - نطاق التحميل عند downloadFirst=true
+  ///   (single: الآية الحالية، surah: كل آيات السورة).
   static Future<void> playAyah({
     required int surah,
     required int ayah,
     bool singleAyah = false,
+    bool streamFirst = true,
+    bool downloadFirst = false,
+    DownloadScope downloadScope = DownloadScope.single,
   }) =>
       AyahAudioController.instance.playAyah(
-          surahNumber: surah, ayahNumber: ayah, singleAyah: singleAyah);
+        surahNumber: surah,
+        ayahNumber: ayah,
+        singleAyah: singleAyah,
+        streamFirst: streamFirst,
+        downloadFirst: downloadFirst,
+        downloadScope: downloadScope,
+      );
 
   // ============ التحكم — ينفّذ على النظام النشط تلقائياً ============
   // Controls — executed on whichever system is currently active.

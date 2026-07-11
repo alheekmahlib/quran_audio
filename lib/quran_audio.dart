@@ -22,6 +22,7 @@ library quran_audio;
 
 // محرك الصوت و Enums
 export 'src/engine/audio_engine.dart';
+export 'src/enums/download_scope.dart';
 export 'src/enums/playback_mode.dart';
 export 'src/enums/repeat_mode.dart';
 

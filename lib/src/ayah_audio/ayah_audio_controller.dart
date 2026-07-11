@@ -9,6 +9,7 @@ import 'package:just_audio/just_audio.dart';
 import '../constants/quran_constants.dart';
 import '../constants/storage_keys.dart';
 import '../engine/audio_engine.dart';
+import '../enums/download_scope.dart';
 import '../enums/playback_mode.dart';
 import '../enums/repeat_mode.dart';
 import '../shared/audio_handler.dart';
@@ -93,6 +94,13 @@ class AyahAudioController extends GetxController {
   /// فهرس بداية الـ playlist داخل السورة (للنمط المتحرك).
   int _playlistStartIndex = 0;
 
+  /// هل يُفضّل التحميل قبل التشغيل (من معامل downloadFirst)؟
+  /// يُعاد ضبطه لـ false بعد كل عملية تشغيل.
+  ///
+  /// Whether to prefer downloading before playback (from downloadFirst).
+  /// Reset to false after each playback.
+  bool _preferLocal = false;
+
   /// القارئ الحالي / Current reader.
   ReaderInfo get currentReader => AyahReaders.active[readerIndex.value];
 
@@ -164,10 +172,17 @@ class AyahAudioController extends GetxController {
   /// [surahNumber] - رقم السورة (1..114).
   /// [ayahNumber] - رقم الآية ضمن السورة (1..ayahCount).
   /// [singleAyah] - true: آية واحدة فقط / false: أكمل للآيات التالية في السورة.
+  /// [streamFirst] - true (الافتراضي): بث مباشر فوراً إن لم يكن الملف محمّلاً.
+  /// [downloadFirst] - true: حمّل الآية/السورة أولاً ثم شغّلها (يسود على streamFirst).
+  /// [downloadScope] - نطاق التحميل عند downloadFirst=true (single: الآية الحالية،
+  ///   surah: كل آيات السورة).
   Future<void> playAyah({
     required int surahNumber,
     required int ayahNumber,
     bool singleAyah = false,
+    bool streamFirst = true,
+    bool downloadFirst = false,
+    DownloadScope downloadScope = DownloadScope.single,
   }) async {
     if (!QuranMetadata.instance.isValidAyah(surahNumber, ayahNumber)) {
       log('Invalid ayah ($surahNumber:$ayahNumber)',
@@ -184,6 +199,30 @@ class AyahAudioController extends GetxController {
     currentAyahUq.value = uqNumberOfCurrent;
     playSingleAyah.value = singleAyah;
 
+    // اضبط تفضيل التحميل لِـ _ayahAudioSource (يُعاد ضبطه لاحقاً).
+    // Set the download preference for _ayahAudioSource (reset later).
+    _preferLocal = downloadFirst && !kIsWeb;
+
+    // إن طُلب التحميل قبل التشغيل، حمّل النطاق المطلوب أولاً.
+    // If download-first was requested, download the requested scope first.
+    if (_preferLocal) {
+      try {
+        if (downloadScope == DownloadScope.surah) {
+          // حمّل كل آيات السورة / download all surah ayahs
+          await downloadSurahAyahs(surahNumber);
+        } else {
+          // حمّل الآية الحالية فقط / download only the current ayah
+          await _downloadCurrentAyah(surahNumber, ayahNumber);
+        }
+      } catch (e, s) {
+        log('playAyah: pre-download failed, falling back to stream: $e',
+            name: 'AyahAudioController', stackTrace: s);
+        _preferLocal = false; // ارجع للبث عند فشل التحميل
+      }
+    }
+    // ملاحظة: streamFirst ضمني عندما downloadFirst=false؛ لا حاجة لِمنطق إضافي
+    // لأن _ayahAudioSource يبثّ افتراضياً عند عدم وجود الملف.
+
     try {
       if (singleAyah) {
         await _playSingleAyah(surahNumber, ayahNumber);
@@ -198,7 +237,27 @@ class AyahAudioController extends GetxController {
       isPlaying.value = false;
       log('playAyah($surahNumber:$ayahNumber) failed: $e',
           name: 'AyahAudioController', stackTrace: s);
+    } finally {
+      _preferLocal = false; // أعد الضبط بعد التشغيل
     }
+  }
+
+  /// حمّل آية واحدة (للتحميل قبل التشغيل).
+  /// Download a single ayah (for download-then-play).
+  Future<void> _downloadCurrentAyah(int surah, int ayah) async {
+    final reader = currentReader;
+    final localPath = AyahUrlBuilder.localPath(
+      docsDir: _docsDir!,
+      surahNumber: surah,
+      ayahInSurah: ayah,
+      reader: reader,
+    );
+    final url = AyahUrlBuilder.url(
+      surahNumber: surah,
+      ayahInSurah: ayah,
+      reader: reader,
+    );
+    await _downloadService.downloadIfNotExists(url: url, localPath: localPath);
   }
 
   /// استئناف التشغيل / Resume playback.
@@ -439,7 +498,7 @@ class AyahAudioController extends GetxController {
     );
 
     if (kIsWeb) {
-      // ويب: بث مباشر / web: stream
+      // ويب: بث مباشر دائماً (لا يمكن التحميل) / web: always stream
       final url =
           AyahUrlBuilder.url(surahNumber: surah, ayahInSurah: ayah, reader: reader);
       return AudioSource.uri(Uri.parse(url), tag: tag);
@@ -454,6 +513,13 @@ class AyahAudioController extends GetxController {
     );
 
     if (await PlatformIo.fileExists(localPath)) {
+      return AudioSource.file(localPath, tag: tag);
+    } else if (_preferLocal) {
+      // downloadFirst=true: حمّل الآية ثم شغّلها محلياً.
+      // downloadFirst=true: download the ayah then play locally.
+      final url = AyahUrlBuilder.url(
+          surahNumber: surah, ayahInSurah: ayah, reader: reader);
+      await _downloadService.downloadIfNotExists(url: url, localPath: localPath);
       return AudioSource.file(localPath, tag: tag);
     } else {
       // غير محمّل — بث مباشر / not downloaded — stream

@@ -55,6 +55,7 @@ A Flutter package for Quran audio playback — **logic only, no UI**. It support
 - [Usage Example](#usage-example)
   - [Play a Surah](#play-a-surah)
   - [Play a Specific Ayah](#play-a-specific-ayah)
+  - [Playback Mode: Stream vs Download](#playback-mode-stream-vs-download)
   - [Playback Controls](#playback-controls)
 - [Reciters](#reciters)
 - [Notification Icon](#notification-icon)
@@ -232,6 +233,41 @@ QuranAudio.playAyah(
   singleAyah: true,
 );
 ```
+
+### Playback Mode: Stream vs Download
+
+By default, playback **streams online** if the file is not already downloaded — giving instant playback. You can change this with `streamFirst` / `downloadFirst` / `downloadScope`:
+
+```dart
+// 1) Default: stream immediately (online)
+QuranAudio.playAyah(surah: 2, ayah: 255);
+
+// 2) Download the single ayah first, then play it (offline-ready)
+QuranAudio.playAyah(
+  surah: 2, ayah: 255,
+  downloadFirst: true,
+  downloadScope: DownloadScope.single,
+);
+
+// 3) Download the entire surah first, then play from ayah 255
+QuranAudio.playAyah(
+  surah: 2, ayah: 255,
+  downloadFirst: true,
+  downloadScope: DownloadScope.surah,
+);
+
+// 4) Full surah — download first then play
+QuranAudio.playSurah(2, downloadFirst: true);
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `streamFirst` | `true` | Stream online immediately if the file is missing |
+| `downloadFirst` | `false` | Download before playing (overrides `streamFirst`) |
+| `downloadScope` | `DownloadScope.single` | With `downloadFirst`: `single` (current ayah) or `surah` (all ayahs) |
+
+> **Web**: downloading is not possible (no file system), so `downloadFirst` is ignored and playback always streams.
+> **Note**: `downloadFirst` takes precedence over `streamFirst`. If the file is already downloaded, it plays locally regardless of either setting.
 
 ### Playback Controls
 
