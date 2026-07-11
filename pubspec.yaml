@@ -1,5 +1,5 @@
 name: quran_audio
-description: "مكتبة تشغيل صوتي للقرآن الكريم - لوجيك فقط بدون UI. تدعم تشغيل السور كاملة والآيات المفردة مع إشعارات الوسائط والتحميل أوفلاين والتكرار."
+description: "A Flutter package for Quran audio playback — logic only, no UI. Supports full-surah and per-ayah playback with system media notifications, offline downloads, and repeat modes."
 version: 0.1.0
 homepage: https://github.com/alheekmahlib/quran_audio
 
@@ -11,17 +11,17 @@ dependencies:
   flutter:
     sdk: flutter
   # إدارة الحالة والتخزين / State management & storage
-  get: ^4.6.6
+  get: ^4.7.3
   get_storage: ^2.1.1
   # محرك الصوت / Audio engine
-  just_audio: ^0.10.5
-  audio_service: ^0.18.18
+  just_audio: ^0.10.6
+  audio_service: ^0.18.19
   just_audio_media_kit: ^2.1.0
   # التحميل / Downloads
-  dio: ^5.9.2
+  dio: ^5.10.0
   # مسارات الملفات / File paths
-  path: ^1.9.0
-  path_provider: ^2.1.5
+  path: ^1.9.1
+  path_provider: ^2.1.6
   # دمج الـ streams / Stream combination
   rxdart: ^0.28.0
 
