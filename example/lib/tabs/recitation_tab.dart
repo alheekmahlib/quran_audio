@@ -99,8 +99,11 @@ class _RecitationTabState extends State<RecitationTab> {
 
   Future<void> _stopSession() async {
     _isRecording.value = false; // فوراً لِتحويل الزر
+    // stop() يتولّى: إيقاف التسجيل، قراءة الملف، بثّه، وإرسال end_tilawa_session.
+    // التصحيح يصل عبر feedbackStream بعد بثّ الصوت (غير لحظي).
+    // stop() handles: stop recording, read file, stream it, send end_tilawa_session.
+    // Feedback arrives via feedbackStream after audio is streamed (not real-time).
     await _session?.stop();
-    _sessionState.value = RecitationState.finished;
   }
 
   @override
@@ -245,13 +248,28 @@ class _RecitationTabState extends State<RecitationTab> {
               children: [
                 Obx(() {
                   final recording = _isRecording.value;
+                  final processing =
+                      _sessionState.value == RecitationState.processing;
                   return FilledButton.icon(
-                    onPressed: recording ? _stopSession : _startSession,
-                    icon: Icon(recording ? Icons.stop_rounded : Icons.mic_rounded),
-                    label: Text(recording ? 'إيقاف' : 'ابدأ التسميع'),
+                    onPressed: processing
+                        ? null
+                        : (recording ? _stopSession : _startSession),
+                    icon: Icon(processing
+                        ? Icons.hourglass_top_rounded
+                        : recording
+                            ? Icons.stop_rounded
+                            : Icons.mic_rounded),
+                    label: Text(processing
+                        ? 'جارٍ المعالجة...'
+                        : recording
+                            ? 'إيقاف'
+                            : 'ابدأ التسميع'),
                     style: FilledButton.styleFrom(
-                      backgroundColor:
-                          recording ? AppColors.destructive : AppColors.accent,
+                      backgroundColor: processing
+                          ? AppColors.surfaceLight
+                          : recording
+                              ? AppColors.destructive
+                              : AppColors.accent,
                       foregroundColor: Colors.white,
                       minimumSize: const Size.fromHeight(50),
                       shape: RoundedRectangleBorder(
@@ -261,8 +279,18 @@ class _RecitationTabState extends State<RecitationTab> {
                 }),
                 const SizedBox(height: 8),
                 Obx(() {
+                  final s = _sessionState.value;
+                  final label = switch (s) {
+                    RecitationState.idle => 'جاهز',
+                    RecitationState.connecting => 'جارٍ الاتصال...',
+                    RecitationState.recording => 'يسجّل — تلا الآن',
+                    RecitationState.paused => 'متوقّف مؤقتاً',
+                    RecitationState.processing => 'جارٍ إرسال الصوت والمعالجة...',
+                    RecitationState.error => 'خطأ',
+                    RecitationState.finished => 'انتهى',
+                  };
                   return Text(
-                    'الحالة: ${_sessionState.value.name}',
+                    'الحالة: $label',
                     style: const TextStyle(
                         color: AppColors.textMuted, fontSize: 12),
                   );

@@ -5,6 +5,7 @@ import 'dart:typed_data' show Uint8List;
 import 'package:get/get.dart';
 import 'package:record/record.dart';
 
+import '../shared/platform_io.dart';
 import 'models/qrc_config.dart';
 import 'models/qrc_feedback.dart';
 import 'qrc_client.dart';
@@ -15,15 +16,23 @@ import 'recitation_state.dart';
 ///
 /// A single recitation session — wires the microphone to the qurani.ai client.
 ///
+/// النمط: تسجيل Opus لِملف مؤقت، ثم بثّ الملف عبر WS بعد الإيقاف.
+/// qurani.ai يتوقع Opus؛ iOS/Android لا يدعمان Opus في streaming، لذا
+/// نسجّل لِملف (مدعوم) ثم نبثّه.
+///
+/// Pattern: record Opus to a temp file, then stream the file over WS after stop.
+/// qurani.ai expects Opus; iOS/Android don't support Opus in streaming mode, so
+/// we record to a file (supported) then stream it.
+///
 /// دورة الحياة:
-/// 1. [start] — يفتح WS، يُرسل `StartTilawaSession`، يبدأ التسجيل ويبثّ القطع.
-/// 2. [feedbackStream] — بثّ التصحيح الحيّ الوارد من الخادم.
-/// 3. [stop] — يُوقف التسجيل ويُغلق الجلسة.
+/// 1. [start] — يفتح WS، يُرسل `start_tilawa_session`، يبدأ التسجيل لِملف Opus.
+/// 2. [feedbackStream] — التصحيح الوارد من الخادم بعد بثّ الصوت.
+/// 3. [stop] — يُوقف التسجيل، يقرأ الملف، يبثّه عبر WS، يُرسل `end_tilawa_session`.
 ///
 /// Lifecycle:
-/// 1. [start] — opens WS, sends `StartTilawaSession`, starts recording & streaming chunks.
-/// 2. [feedbackStream] — live feedback stream from the server.
-/// 3. [stop] — stops recording and closes the session.
+/// 1. [start] — opens WS, sends `start_tilawa_session`, starts recording to an Opus file.
+/// 2. [feedbackStream] — feedback from the server after audio is streamed.
+/// 3. [stop] — stops recording, reads the file, streams it over WS, sends `end_tilawa_session`.
 class RecitationSession {
   RecitationSession({
     required this.config,
@@ -44,7 +53,7 @@ class RecitationSession {
   QrcClient? _client;
   AudioRecorder? _recorder;
   bool _ownsRecorder = false;
-  StreamSubscription? _audioSub;
+  String? _recordingPath;
 
   /// حالة الجلسة (reactive لِـ GetX).
   /// Session state (reactive for GetX).
@@ -57,14 +66,14 @@ class RecitationSession {
   /// هل الجلسة مفتوحة؟ / Is the session open?
   bool get isOpen => _client != null && _client!.isConnected;
 
-  /// تدفّق التصحيح الحيّ.
-  /// Live feedback stream.
+  /// تدفّق التصحيح الوارد.
+  /// Incoming feedback stream.
   Stream<QrcFeedback> get feedbackStream =>
       _client?.feedbackStream ?? const Stream.empty();
 
-  /// ابدأ الجلسة: اتصل، أرسل start، ابدأ التسجيل والبثّ.
+  /// ابدأ الجلسة: اتصل، أرسل start، ابدأ التسجيل لِملف Opus.
   ///
-  /// Start the session: connect, send start, begin recording & streaming.
+  /// Start the session: connect, send start, begin recording to an Opus file.
   Future<void> start() async {
     if (state.value.isActive) {
       log('RecitationSession already active', name: 'RecitationSession');
@@ -85,7 +94,7 @@ class RecitationSession {
       // 2) أرسل رسالة بدء الجلسة (مرة واحدة).
       _client!.sendJson(config.toStartPayload());
 
-      // 3) ابدأ التسجيل وبثّ القطع.
+      // 3) ابدأ التسجيل لِملف Opus.
       await _startRecording();
 
       state.value = RecitationState.recording;
@@ -98,36 +107,28 @@ class RecitationSession {
     }
   }
 
-  /// ابدأ التسجيل وبثّ القطع الصوتية عبر WS.
-  /// Start recording and stream audio chunks over WS.
+  /// ابدأ التسجيل لِملف Opus مؤقت.
+  /// Start recording to a temporary Opus file.
   Future<void> _startRecording() async {
-    // أنشئ مُسجّلاً إن لم يُمرَّر من الخارج.
     _recorder ??= AudioRecorder();
     _ownsRecorder = true;
 
-    // تحقق/اطلب صلاحية الميكروفون. record.hasPermission يطلب الإذن تلقائياً.
-    // Check/request mic permission. record.hasPermission requests it automatically.
     final hasMic = await _recorder!.hasPermission();
     if (!hasMic) {
       throw StateError('Microphone permission denied');
     }
 
-    // إعدادات التسجيل. وضع التسجيل المتدفّق (startStream) على iOS/Android يدعم
-    // PCM فقط (لا يدعم Opus/AAC في الـ streaming — يلزم تسجيل لِملف). لذلك
-    // نستخدم pcm16 أحادي القناة بِمعدّل 16kHz (مطابق لِمتطلبات معظم نماذج ASR).
-    //
-    // Recording settings. The streaming mode (startStream) on iOS/Android only
-    // supports PCM (no Opus/AAC in streaming — that requires file recording).
-    // So we use mono pcm16 at 16kHz (matches most ASR model requirements).
-    //
-    // TODO(qurani.ai): إن تطلّب الخادم صيغة ضغط (Opus/WebM)، يمكن التحويل لِملف
-    // مؤقت ثم بثّه، أو استخدام حزمة ffmpeg لِإعادة الترميز. راجع وثائق الخادم.
-    //
-    // TODO(qurani.ai): if the server requires compressed audio (Opus/WebM),
-    // consider writing to a temp file then streaming it, or use an ffmpeg
-    // package to re-encode. Check the server docs.
+    // حدّد مسار ملف مؤقت بصيغة opus (مغلّف ogg).
+    // Determine a temp file path in opus (ogg container) format.
+    final tempDir = await PlatformIo.tempDir;
+    _recordingPath = '$tempDir/quran_recitation_${DateTime.now().millisecondsSinceEpoch}.opus';
+
+    // إعدادات التسجيل — Opus أحادي 16kHz.
+    // Recording settings — mono Opus at 16kHz.
+    // Opus مدعوم في تسجيل الملفات (لا streaming) على iOS/Android.
+    // Opus is supported for file recording (not streaming) on iOS/Android.
     final settings = RecordConfig(
-      encoder: AudioEncoder.pcm16bits,
+      encoder: AudioEncoder.opus,
       sampleRate: 16000,
       numChannels: 1,
       autoGain: true,
@@ -135,56 +136,68 @@ class RecitationSession {
       noiseSuppress: true,
     );
 
-    // ابثث القطع الثنائية عبر WS.
-    final stream = await _recorder!.startStream(settings);
-    _audioSub = stream.listen(
-      (Uint8List chunk) {
-        _client?.sendAudioChunk(chunk);
-      },
-      onError: (e, s) => log('Recorder stream error: $e',
-          name: 'RecitationSession', stackTrace: s),
-    );
+    await _recorder!.start(settings, path: _recordingPath!);
+    log('Recording to Opus file: $_recordingPath', name: 'RecitationSession');
   }
 
-  /// أوقف التسجيل (دون إغلاق الاتصال — قابل للاستئناف).
-  /// Stop recording (without closing the connection — resumable).
-  Future<void> pause() async {
-    await _audioSub?.cancel();
-    _audioSub = null;
-    await _recorder?.stop();
-    if (state.value == RecitationState.recording) {
-      state.value = RecitationState.paused;
-    }
-  }
-
-  /// أوقف الجلسة تماماً وأصدر الموارد.
-  /// Stop the session entirely and release resources.
+  /// أوقف الجلسة: أوقف التسجيل، اقرأ الملف، ابثّه، أرسل end.
+  /// Stop the session: stop recording, read the file, stream it, send end.
   Future<void> stop() async {
     try {
-      // أوقف التسجيل أولاً.
-      await _audioSub?.cancel();
-      _audioSub = null;
-      await _recorder?.stop();
+      // 1) أوقف التسجيل وأخذ مسار الملف.
+      final path = await _recorder?.stop();
+      _recordingPath = path ?? _recordingPath;
+      state.value = RecitationState.processing;
+      log('Recording stopped. File: $_recordingPath', name: 'RecitationSession');
 
-      // أرسل رسالة إنهاء الجلسة (تنظيف صريح موثّق).
-      // Send the end-session message (explicit documented cleanup).
-      _client?.sendJson(config.toEndPayload());
-    } catch (e, s) {
-      log('RecitationSession stop (pre-close) error: $e',
-          name: 'RecitationSession', stackTrace: s);
-    }
-    try {
-      if (_ownsRecorder) {
-        await _recorder?.dispose();
+      // 2) اقرأ الملف وابثّه عبر WS على دفعات.
+      if (_recordingPath != null && _client != null) {
+        await _streamFileOverWs(_recordingPath!);
       }
-      _recorder = null;
-      await _client?.close();
-      _client = null;
+
+      // 3) أرسل رسالة إنهاء الجلسة.
+      _client?.sendJson(config.toEndPayload());
     } catch (e, s) {
       log('RecitationSession stop error: $e',
           name: 'RecitationSession', stackTrace: s);
     } finally {
+      try {
+        if (_ownsRecorder) {
+          await _recorder?.dispose();
+        }
+        _recorder = null;
+        // احذف الملف المؤقت.
+        if (_recordingPath != null) {
+          await PlatformIo.deleteFile(_recordingPath!);
+        }
+        await _client?.close();
+        _client = null;
+      } catch (_) {}
       state.value = RecitationState.finished;
+    }
+  }
+
+  /// اقرأ ملف الصوت وابثّه عبر WS على دفعات (chunks).
+  ///
+  /// Read the audio file and stream it over WS in chunks.
+  Future<void> _streamFileOverWs(String filePath) async {
+    try {
+      final bytes = await PlatformIo.readFile(filePath);
+      const chunkSize = 4096; // 4KB chunks
+      log('Streaming ${bytes.length} bytes of Opus audio over WS...',
+          name: 'RecitationSession');
+      for (int offset = 0; offset < bytes.length; offset += chunkSize) {
+        final end = (offset + chunkSize > bytes.length)
+            ? bytes.length
+            : offset + chunkSize;
+        _client?.sendAudioChunk(
+          Uint8List.sublistView(bytes, offset, end),
+        );
+      }
+      log('Finished streaming audio.', name: 'RecitationSession');
+    } catch (e, s) {
+      log('Failed to stream file: $e', name: 'RecitationSession',
+          stackTrace: s);
     }
   }
 
