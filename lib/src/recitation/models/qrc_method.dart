@@ -8,9 +8,13 @@ enum QrcMethod {
   /// إنهاء الجلسة (اختياري — إغلاق WS كافٍ، لكن هذا تنظيف صريح).
   endTilawaSession;
 
-  /// قيمة السلسلة كما تُرسل على السلك (wire string) — مطابقة لِـ qurani.ai JS.
+  /// قيمة السلسلة كما تُرسل على السلك (wire string).
+  /// الوثائق تُشير إلى PascalCase في كود JS (`methods.START_TILAWA_SESSION`).
+  ///
+  /// The wire string. The JS docs reference PascalCase
+  /// (`methods.START_TILAWA_SESSION`).
   String get wire => switch (this) {
-        startTilawaSession => 'start_tilawa_session',
-        endTilawaSession => 'end_tilawa_session',
+        startTilawaSession => 'StartTilawaSession',
+        endTilawaSession => 'EndTilawaSession',
       };
 }

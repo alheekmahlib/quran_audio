@@ -121,14 +121,17 @@ class RecitationSession {
     // حدّد مسار ملف مؤقت بصيغة opus (مغلّف ogg).
     // Determine a temp file path in opus (ogg container) format.
     final tempDir = await PlatformIo.tempDir;
-    _recordingPath = '$tempDir/quran_recitation_${DateTime.now().millisecondsSinceEpoch}.opus';
+    _recordingPath = '$tempDir/quran_recitation_${DateTime.now().millisecondsSinceEpoch}.wav';
 
-    // إعدادات التسجيل — Opus أحادي 16kHz.
-    // Recording settings — mono Opus at 16kHz.
-    // Opus مدعوم في تسجيل الملفات (لا streaming) على iOS/Android.
-    // Opus is supported for file recording (not streaming) on iOS/Android.
+    // إعدادات التسجيل — WAV أحادي 16kHz.
+    // WAV مدعوم على كل المنصات (iOS/Android/web/desktop). qurani.ai يفضّل Opus
+    // لكن WAV/PCM16 صيغة قياسية لِنماذج ASR وقد يُقبل.
+    //
+    // Recording settings — mono WAV at 16kHz.
+    // WAV is supported on all platforms (iOS/Android/web/desktop). qurani.ai
+    // prefers Opus, but WAV/PCM16 is a standard ASR format and may be accepted.
     final settings = RecordConfig(
-      encoder: AudioEncoder.opus,
+      encoder: AudioEncoder.wav,
       sampleRate: 16000,
       numChannels: 1,
       autoGain: true,
@@ -137,7 +140,7 @@ class RecitationSession {
     );
 
     await _recorder!.start(settings, path: _recordingPath!);
-    log('Recording to Opus file: $_recordingPath', name: 'RecitationSession');
+    log('Recording to WAV file: $_recordingPath', name: 'RecitationSession');
   }
 
   /// أوقف الجلسة: أوقف التسجيل، اقرأ الملف، ابثّه، أرسل end.
@@ -150,9 +153,21 @@ class RecitationSession {
       state.value = RecitationState.processing;
       log('Recording stopped. File: $_recordingPath', name: 'RecitationSession');
 
-      // 2) اقرأ الملف وابثّه عبر WS على دفعات.
-      if (_recordingPath != null && _client != null) {
-        await _streamFileOverWs(_recordingPath!);
+      // تحقق من وجود وحجم الملف قبل البثّ.
+      // Verify the file exists and has content before streaming.
+      if (_recordingPath == null) {
+        log('No recording file path — nothing to stream.',
+            name: 'RecitationSession');
+        lastError.value = 'لم يُسجَّل أي صوت';
+      } else if (!await PlatformIo.fileExists(_recordingPath!)) {
+        log('Recording file does not exist: $_recordingPath',
+            name: 'RecitationSession');
+        lastError.value = 'ملف التسجيل غير موجود';
+      } else {
+        // 2) اقرأ الملف وابثّه عبر WS على دفعات.
+        if (_client != null) {
+          await _streamFileOverWs(_recordingPath!);
+        }
       }
 
       // 3) أرسل رسالة إنهاء الجلسة.
@@ -184,7 +199,7 @@ class RecitationSession {
     try {
       final bytes = await PlatformIo.readFile(filePath);
       const chunkSize = 4096; // 4KB chunks
-      log('Streaming ${bytes.length} bytes of Opus audio over WS...',
+      log('Streaming ${bytes.length} bytes of WAV audio over WS...',
           name: 'RecitationSession');
       for (int offset = 0; offset < bytes.length; offset += chunkSize) {
         final end = (offset + chunkSize > bytes.length)
