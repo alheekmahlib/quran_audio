@@ -1,6 +1,7 @@
 name: quran_audio
 description: "A Flutter package for Quran audio playback — logic only, no UI. Supports full-surah and per-ayah playback with system media notifications, offline downloads, and repeat modes."
-version: 0.1.0
+version: 1.0.0
+documentation: https://quran-audio.vexaltech.dev
 homepage: https://github.com/alheekmahlib/quran_audio
 
 environment:

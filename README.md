@@ -116,7 +116,7 @@ In the `pubspec.yaml` of your flutter project, add the following dependency:
 ```yaml
 dependencies:
   ...
-  quran_audio: ^0.1.0
+  quran_audio: ^1.0.0
 ```
 
 Import it:
