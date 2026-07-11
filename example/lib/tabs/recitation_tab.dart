@@ -37,6 +37,9 @@ class _RecitationTabState extends State<RecitationTab> {
   // حالة تفاعلية لِتهيئة التسميع (بديل عن static getter في Obx).
   // Reactive flag for recitation init (replaces the static getter in Obx).
   final _isReady = false.obs;
+  // حالة الجلسة (تُحدَّث من session.state.listen، تُقرأ .value في Obx).
+  // Session state (updated from session.state.listen, .value read in Obx).
+  final _sessionState = RecitationState.idle.obs;
 
   @override
   void dispose() {
@@ -71,6 +74,7 @@ class _RecitationTabState extends State<RecitationTab> {
     });
     _session!.state.listen((s) {
       _isRecording.value = s == RecitationState.recording;
+      _sessionState.value = s; // عكس الحالة لِقراءة آمنة في Obx
       if (s.isError) {
         Get.snackbar('خطأ', _session!.lastError.value,
             snackPosition: SnackPosition.BOTTOM);
@@ -81,6 +85,7 @@ class _RecitationTabState extends State<RecitationTab> {
 
   Future<void> _stopSession() async {
     await _session?.stop();
+    _sessionState.value = RecitationState.finished;
     _isRecording.value = false;
   }
 
@@ -242,9 +247,8 @@ class _RecitationTabState extends State<RecitationTab> {
                 }),
                 const SizedBox(height: 8),
                 Obx(() {
-                  final s = _session?.state.value ?? RecitationState.idle;
                   return Text(
-                    'الحالة: ${s.name}',
+                    'الحالة: ${_sessionState.value.name}',
                     style: const TextStyle(
                         color: AppColors.textMuted, fontSize: 12),
                   );
