@@ -1,46 +1,31 @@
+import '../qrc_constants.dart';
 import 'qrc_method.dart';
 
-/// إعدادات بدء جلسة تسميع (payload لِـ `StartTilawaSession`).
+/// إعدادات بدء جلسة تسميع (payload لِـ `start_tilawa_session`).
 ///
-/// Configuration to start a recitation session (the `StartTilawaSession` payload).
+/// Configuration to start a recitation session (the `start_tilawa_session` payload).
 ///
-/// الحقول تطابق ما ورد في مثال qurani.ai JS. النطاقات والدلالات الدقيقة
-/// لبعض الحقول غير موثّقة (مُعلَّمة بِـ TODO) — استخدم القيم الافتراضية ثم
-/// اضبطها تجريبياً عند الحصول على API key.
+/// الحقول مطابقة لِوثائق qurani.ai JS. النطاقات مؤكَّدة:
+/// - chapter_index: 1..114 (1-based)
+/// - verse_index / word_index: 1-based ضمن السورة/الآية
+/// - hafz_level: 1..3
+/// - tajweed_level: 1..3
 ///
-/// Fields match the qurani.ai JS example. Exact ranges/semantics for some
-/// fields are undocumented (marked TODO) — use defaults, then calibrate
-/// empirically once you have an API key.
+/// Fields match the qurani.ai JS docs. Ranges are confirmed.
 class QrcConfig {
   /// رقم السورة (1..114).
-  ///
-  /// ⚠️ TODO: لم تُوثّق qurani.ai ما إذا كان 0-based أم 1-based. الافتراض 1-based
-  /// (مطابق لِلاتفاق القرآني). تحقّق عند الاختبار.
-  ///
-  /// ⚠️ TODO: qurani.ai doesn't state 0-based vs 1-based. Assumed 1-based
-  /// (matching Quran convention). Verify during testing.
   final int chapterIndex;
 
   /// رقم الآية ضمن السورة (1..ayahCount).
-  /// Verse index within the surah (1..ayahCount).
   final int verseIndex;
 
   /// رقم الكلمة الابتدائية ضمن الآية (الافتراضي 1).
-  /// Starting word index within the verse (default 1).
   final int wordIndex;
 
-  /// مستوى الحفظ — يضبط توقّعات النموذج حسب مستوى الحافظ.
-  ///
-  /// ⚠️ TODO: النطاق المسموح غير موثّق. الافتراضي 1.
-  ///
-  /// ⚠️ TODO: allowed range is undocumented. Default 1.
+  /// مستوى الحفظ (1..3). يضبط توقّعات النموذج.
   final int hafzLevel;
 
-  /// مستوى صرامة فحص التجويد.
-  ///
-  /// ⚠️ TODO: النطاق المسموح غير موثّق. الافتراضي 1.
-  ///
-  /// ⚠️ TODO: allowed range is undocumented. Default 1.
+  /// مستوى صرامة فحص التجويد (1..3).
   final int tajweedLevel;
 
   const QrcConfig({
@@ -49,10 +34,13 @@ class QrcConfig {
     this.wordIndex = 1,
     this.hafzLevel = 1,
     this.tajweedLevel = 1,
-  });
+  })  : assert(hafzLevel >= QrcConstants.minHafzLevel &&
+            hafzLevel <= QrcConstants.maxHafzLevel),
+        assert(tajweedLevel >= QrcConstants.minTajweedLevel &&
+            tajweedLevel <= QrcConstants.maxTajweedLevel);
 
   /// ابنِ payload رسالة بدء الجلسة كما تتوقّعها qurani.ai.
-  /// Build the StartTilawaSession payload expected by qurani.ai.
+  /// Build the start_tilawa_session payload expected by qurani.ai.
   Map<String, dynamic> toStartPayload() => {
         'method': QrcMethod.startTilawaSession.wire,
         'chapter_index': chapterIndex,
@@ -60,6 +48,12 @@ class QrcConfig {
         'word_index': wordIndex,
         'hafz_level': hafzLevel,
         'tajweed_level': tajweedLevel,
+      };
+
+  /// ابنِ payload إنهاء الجلسة.
+  /// Build the end_tilawa_session payload.
+  Map<String, dynamic> toEndPayload() => {
+        'method': QrcMethod.endTilawaSession.wire,
       };
 
   QrcConfig copyWith({

@@ -161,8 +161,19 @@ class RecitationSession {
   /// Stop the session entirely and release resources.
   Future<void> stop() async {
     try {
+      // أوقف التسجيل أولاً.
       await _audioSub?.cancel();
       _audioSub = null;
+      await _recorder?.stop();
+
+      // أرسل رسالة إنهاء الجلسة (تنظيف صريح موثّق).
+      // Send the end-session message (explicit documented cleanup).
+      _client?.sendJson(config.toEndPayload());
+    } catch (e, s) {
+      log('RecitationSession stop (pre-close) error: $e',
+          name: 'RecitationSession', stackTrace: s);
+    }
+    try {
       if (_ownsRecorder) {
         await _recorder?.dispose();
       }

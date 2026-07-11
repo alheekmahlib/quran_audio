@@ -130,11 +130,16 @@ class QrcClient {
     if (data is String) {
       try {
         final json = jsonDecode(data) as Map<String, dynamic>;
+        final fb = QrcFeedback.fromJson(json);
+        log('QrcClient ← ${fb.event} (exit=${fb.exitCode}): '
+            '${fb.isFeedback ? "correct=${fb.correctWords.length}, skipped=${fb.skippedWords.length}, tajweed=${fb.tajweedMistakeCount}" : json}',
+            name: 'QrcClient');
         if (!_feedbackController.isClosed) {
-          _feedbackController.add(QrcFeedback.fromJson(json));
+          _feedbackController.add(fb);
         }
       } catch (e) {
-        log('QrcClient: failed to decode message: $e', name: 'QrcClient');
+        log('QrcClient: failed to decode message ($data): $e',
+            name: 'QrcClient');
       }
     }
     // الرسائل الثنائية (غير النصية) تُتجاهل — QRC يُرجع JSON نصياً.

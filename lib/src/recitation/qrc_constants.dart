@@ -1,52 +1,72 @@
 /// استراتيجية إرسال مفتاح API لِـ qurani.ai.
 ///
 /// Strategy for sending the qurani.ai API key over the WebSocket.
-///
-/// qurani.ai لا توثّق كيفية إرسال المفتاح صراحةً. الافتراضي هو query param،
-/// لكن المستخدم يمكنه تجاوزه عبر `Recitation.init(authStrategy: ...)`.
-///
-/// qurani.ai does not document how the key is sent. The default is a query
-/// param, but the user can override via `Recitation.init(authStrategy: ...)`.
 enum QrcAuthStrategy {
   /// أضف المفتاح كمعامل استعلام على رابط wss (مثل `?api_key=...`).
   /// Append the key as a query param on the wss URL (e.g. `?api_key=...`).
+  /// هذا هو النمط الموثّق في qurani.ai: `wss://api.qurani.ai?api_key=KEY`.
   queryParam,
 
   /// أرسل المفتاح كأول رسالة JSON بعد الاتصال.
-  /// Send the key as the first JSON message after connecting.
   firstMessage,
 
   /// أرسل المفتاح عبر Sec-WebSocket-Protocol subprotocol.
-  /// Send the key via the Sec-WebSocket-Protocol subprotocol.
   subprotocol,
 }
 
-/// ثوابت عميل qurani.ai QRC.
+/// أحداث qurani.ai الواردة (server → client).
 ///
-/// Constants for the qurani.ai QRC client.
+/// Inbound qurani.ai events (server → client).
+enum QrcEvent {
+  /// تأكيد بدء الجلسة — `{event: "start_tilawa_session", exit_code, websocket_id}`.
+  startTilawaSession,
+
+  /// التصحيح الفعلي — `{event: "check_tilawa", exit_code, correct_words, skipped_words, tajweed_mistakes, ...}`.
+  checkTilawa,
+
+  /// حدث غير معروف.
+  unknown;
+
+  /// حلّل من نص الحدث القادم من الخادم.
+  /// Parse from the event string received from the server.
+  static QrcEvent fromString(String? value) => switch (value) {
+        'start_tilawa_session' => QrcEvent.startTilawaSession,
+        'check_tilawa' => QrcEvent.checkTilawa,
+        _ => QrcEvent.unknown,
+      };
+}
+
+/// ثوابت عميل qurani.ai QRC (موثّقة من qurani.ai).
+///
+/// Constants for the qurani.ai QRC client (documented by qurani.ai).
 class QrcConstants {
   QrcConstants._();
 
-  /// عنوان WebSocket الافتراضي.
+  /// عنوان WebSocket الرسمي الموثّق.
   ///
-  /// ⚠️ TODO(qurani.ai): العنوان الدقيق غير موثّق بِشكل قاطع في الوثائق
-  /// (يُضمَّن في كود JS غير مُستخرَج). هذا افتراضي معقول قابل للتجاوز عبر
-  /// `Recitation.init(wsUrl: ...)`. يجب التحقق منه عند الحصول على API key.
-  ///
-  /// ⚠️ The exact endpoint is not definitively documented (embedded in JS code
-  /// that was not extracted). This is a reasonable default, overridable via
-  /// `Recitation.init(wsUrl: ...)`. Verify it once you have an API key.
-  static const String defaultWsUrl = 'wss://qurani.ai/api/qrc/ws';
+  /// The official documented WebSocket endpoint.
+  /// صيغة الاستخدام: `wss://api.qurani.ai?api_key=YOUR_KEY`.
+  static const String defaultWsUrl = 'wss://api.qurani.ai';
 
-  /// استراتيجية المصادقة الافتراضية.
+  /// استراتيجية المصادقة الافتراضية (موثّقة في qurani.ai JS).
   static const QrcAuthStrategy defaultAuthStrategy =
       QrcAuthStrategy.queryParam;
 
-  /// اسم معامل الاستعلام لِلمفتاح عند استخدام queryParam.
-  /// Query-param name for the key when using queryParam strategy.
+  /// اسم معامل الاستعلام لِلمفتاح.
   static const String apiKeyQueryParam = 'api_key';
 
-  /// زمن انتظار الاتصال الافتراضي (10 ثوانٍ).
-  /// Default connection timeout (10 seconds).
+  /// زمن انتظار الاتصال الافتراضي.
   static const Duration connectTimeout = Duration(seconds: 10);
+
+  /// الحد الأدنى لِمستوى الحفظ.
+  static const int minHafzLevel = 1;
+
+  /// الحد الأقصى لِمستوى الحفظ.
+  static const int maxHafzLevel = 3;
+
+  /// الحد الأدنى لِمستوى التجويد.
+  static const int minTajweedLevel = 1;
+
+  /// الحد الأقصى لِمستوى التجويد.
+  static const int maxTajweedLevel = 3;
 }

@@ -298,27 +298,32 @@ class _RecitationTabState extends State<RecitationTab> {
                       child: ListTile(
                         dense: true,
                         leading: Icon(
-                          fb.isCorrect == true
+                          fb.isFullyCorrect
                               ? Icons.check_circle_rounded
-                              : fb.isCorrect == false
+                              : fb.isFeedback
                                   ? Icons.error_rounded
                                   : Icons.info_rounded,
-                          color: fb.isCorrect == true
+                          color: fb.isFullyCorrect
                               ? AppColors.success
-                              : fb.isCorrect == false
+                              : fb.isFeedback
                                   ? AppColors.destructive
                                   : AppColors.accent,
                           size: 20,
                         ),
                         title: Text(
-                          fb.message ??
-                              fb.event ??
-                              fb.score?.toStringAsFixed(1) ??
-                              'رسالة',
+                          fb.isFeedback
+                              ? '✓ ${fb.correctWords.length} صحيحة • '
+                                  '✗ ${fb.skippedWords.length} متخطّاة • '
+                                  '🎵 ${fb.tajweedMistakeCount} تجويد'
+                              : fb.isSessionStart
+                                  ? 'بدء الجلسة (ws: ${fb.websocketId ?? "?"})'
+                                  : fb.event.name,
                           style: const TextStyle(fontSize: 13),
                         ),
                         subtitle: Text(
-                          fb.raw.toString(),
+                          fb.isFeedback && fb.skippedWords.isNotEmpty
+                              ? 'متخطّاة: ${fb.skippedWords.take(5).join("، ")}'
+                              : fb.raw.toString(),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(

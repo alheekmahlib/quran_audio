@@ -1,22 +1,20 @@
+import '../qrc_constants.dart';
+
 /// تصحيح تلاوة وارد من qurani.ai.
 ///
 /// Recitation feedback received from qurani.ai.
 ///
-/// ⚠️ qurani.ai لا تنشر بنية JSON لِلاستجابة. لذلك هذا النموذج **permissive**:
-/// يحتفظ بِالـ JSON الخام في [raw] ويوفّر accessors دفاعية لِحقول محتملة شائعة.
-/// عند توثيق البنية لاحقاً، يمكن إضافة accessors أقوى أو إنشاء sub-models.
+/// بنية الاستجابة موثّقة الآن:
+/// - `start_tilawa_session`: `{event, exit_code, websocket_id}`
+/// - `check_tilawa`: `{event, exit_code, chapter_index, verse_index, word_index,
+///    correct_words[], skipped_words[], tajweed_mistakes[]}`
 ///
-/// ⚠️ qurani.ai does not publish the response JSON schema. So this model is
-/// **permissive**: it keeps the raw JSON in [raw] and provides defensive
-/// accessors for common likely fields. Once documented, stronger accessors or
-/// sub-models can be added.
+/// The response schema is now documented.
 class QrcFeedback {
   /// الـ JSON الخام القادم من الخادم.
-  /// The raw JSON received from the server.
   final Map<String, dynamic> raw;
 
   /// وقت استلام الرسالة.
-  /// Time the message was received.
   final DateTime timestamp;
 
   const QrcFeedback({required this.raw, required this.timestamp});
@@ -24,35 +22,82 @@ class QrcFeedback {
   factory QrcFeedback.fromJson(Map<String, dynamic> json) =>
       QrcFeedback(raw: json, timestamp: DateTime.now());
 
-  // ============ accessors دفاعية لِحقول محتملة ============
-  // Defensive accessors for likely fields (all nullable — absent-safe).
+  // ============ الحقول المشتركة / Common fields ============
 
-  /// اسم الحدث/الطريقة إن وُجد (مثل `event`, `type`, `method`).
-  /// Event/method name if present (e.g. `event`, `type`, `method`).
-  String? get event =>
-      (raw['event'] ?? raw['type'] ?? raw['method']) as String?;
+  /// نوع الحدث.
+  /// Event type.
+  QrcEvent get event => QrcEvent.fromString(raw['event'] as String?);
 
-  /// هل التلاوة صحيحة حتى الآن؟ (إن وفَر الخادم هذا الحقل).
-  /// Is the recitation correct so far? (if the server provides this field).
-  bool? get isCorrect => raw['correct'] as bool?;
+  /// رمز الخروج/الحالة (0 = نجاح عادةً).
+  /// Exit/status code (0 = success typically).
+  int? get exitCode => raw['exit_code'] as int?;
 
-  /// درجة صحة (0..100 أو 0..1) إن وُجدت.
-  /// Correctness score (0..100 or 0..1) if present.
-  num? get score => (raw['score'] ?? raw['accuracy']) as num?;
+  /// هل الحدث ناجح (exit_code == 0)؟
+  /// Is this event successful (exit_code == 0)?
+  bool get isSuccess => exitCode == 0;
 
-  /// قائمة أخطاء محتملة (إن وُجدت).
-  /// List of detected errors (if present).
-  List<dynamic>? get errors => raw['errors'] as List<dynamic>?;
+  // ============ حقول start_tilawa_session ============
 
-  /// الكلمة/الآية المعنية (إن وُجدت).
-  /// The word/verse in question (if present).
-  dynamic get target => raw['word'] ?? raw['verse'] ?? raw['target'];
+  /// معرّف الـ websocket (في حدث بدء الجلسة).
+  /// WebSocket id (in the session-start event).
+  String? get websocketId => raw['websocket_id'] as String?;
 
-  /// رسالة نصية إن وُجدت.
-  /// Text message if present.
-  String? get message => raw['message'] as String?;
+  // ============ حقول check_tilawa (التصحيح) ============
+
+  /// رقم السورة المعنية بالتصحيح.
+  /// Surah number in the feedback.
+  int? get chapterIndex => raw['chapter_index'] as int?;
+
+  /// رقم الآية المعنية بالتصحيح.
+  /// Verse number in the feedback.
+  int? get verseIndex => raw['verse_index'] as int?;
+
+  /// رقم الكلمة المعنية.
+  /// Word number in the feedback.
+  int? get wordIndex => raw['word_index'] as int?;
+
+  /// الكلمات الصحيحة (نطقها المستخدم بشكل سليم).
+  /// Correctly recited words.
+  List<String> get correctWords =>
+      (raw['correct_words'] as List<dynamic>?)?.cast<String>() ?? const [];
+
+  /// الكلمات المتخطّاة (لم ينطقها المستخدم).
+  /// Skipped words (not recited by the user).
+  List<String> get skippedWords =>
+      (raw['skipped_words'] as List<dynamic>?)?.cast<String>() ?? const [];
+
+  /// أخطاء التجويد.
+  /// Tajweed mistakes.
+  List<dynamic> get tajweedMistakes =>
+      (raw['tajweed_mistakes'] as List<dynamic>?) ?? const [];
+
+  /// عدد أخطاء التجويد.
+  /// Number of tajweed mistakes.
+  int get tajweedMistakeCount => tajweedMistakes.length;
+
+  /// هل التلاوة صحيحة تماماً (لا كلمات متخطّاة، لا أخطاء تجويد)؟
+  /// Is the recitation fully correct (no skipped words, no tajweed mistakes)?
+  bool get isFullyCorrect =>
+      skippedWords.isEmpty && tajweedMistakes.isEmpty && correctWords.isNotEmpty;
+
+  /// درجة تقريبية (نسبة الكلمات الصحيحة من المجموع).
+  /// Approximate score (ratio of correct words to total).
+  double get score {
+    final total = correctWords.length + skippedWords.length;
+    if (total == 0) return 0;
+    return correctWords.length / total;
+  }
+
+  /// هل هذه رسالة تصحيح (check_tilawa)؟
+  /// Is this a feedback message (check_tilawa)?
+  bool get isFeedback => event == QrcEvent.checkTilawa;
+
+  /// هل هذه رسالة تأكيد بدء الجلسة؟
+  /// Is this a session-start confirmation?
+  bool get isSessionStart => event == QrcEvent.startTilawaSession;
 
   @override
-  String toString() => 'QrcFeedback(event: $event, correct: $isCorrect, '
-      'score: $score, raw: $raw)';
+  String toString() => 'QrcFeedback(event: $event, exitCode: $exitCode, '
+      'correct: ${correctWords.length}, skipped: ${skippedWords.length}, '
+      'tajweedMistakes: $tajweedMistakeCount)';
 }

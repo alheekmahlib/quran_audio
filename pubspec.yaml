@@ -30,7 +30,9 @@ dependencies:
   archive: ^4.0.9
   # التسميع (qurani.ai QRC) — اختياري، يُحمّل فقط عند Recitation.init()
   # Recitation correction (qurani.ai QRC) — optional, lazy-loaded
-  web_socket_channel: ^3.0.0
+  # ملاحظة: مثبّت على 2.x لِتفادي objective_c FFI في web_socket 1.x على iOS.
+  # Note: pinned to 2.x to avoid the objective_c FFI in web_socket 1.x on iOS.
+  web_socket_channel: ^2.4.0
   record: ^6.0.0
 
 dev_dependencies:
