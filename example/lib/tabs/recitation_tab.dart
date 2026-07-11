@@ -34,6 +34,9 @@ class _RecitationTabState extends State<RecitationTab> {
   RecitationSession? _session;
   final _feedbacks = <QrcFeedback>[].obs;
   final _isRecording = false.obs;
+  // حالة تفاعلية لِتهيئة التسميع (بديل عن static getter في Obx).
+  // Reactive flag for recitation init (replaces the static getter in Obx).
+  final _isReady = false.obs;
 
   @override
   void dispose() {
@@ -116,12 +119,10 @@ class _RecitationTabState extends State<RecitationTab> {
                   FilledButton(
                     onPressed: () {
                       Recitation.init(apiKey: _apiKeyCtrl.text.trim());
-                      setState(() {}); // يُحدّث العرض
+                      _isReady.value = Recitation.isInitialized; // تحديث تفاعلي
                       Get.snackbar(
                         'تم',
-                        Recitation.isInitialized
-                            ? 'تم تفعيل التسميع'
-                            : 'مفتاح فارغ',
+                        _isReady.value ? 'تم تفعيل التسميع' : 'مفتاح فارغ',
                         snackPosition: SnackPosition.BOTTOM,
                       );
                     },
@@ -132,8 +133,8 @@ class _RecitationTabState extends State<RecitationTab> {
               const SizedBox(height: 8),
               Obx(() => InfoChip(
                     label: 'الحالة',
-                    value: Recitation.isInitialized ? 'مفعّل' : 'غير مفعّل',
-                    icon: Recitation.isInitialized
+                    value: _isReady.value ? 'مفعّل' : 'غير مفعّل',
+                    icon: _isReady.value
                         ? Icons.check_circle_rounded
                         : Icons.lock_outline,
                   )),
@@ -144,19 +145,22 @@ class _RecitationTabState extends State<RecitationTab> {
 
         // إن لم يُفعّل، اعرض رسالة وتوقّف.
         // If not enabled, show a message and stop here.
-        if (!Recitation.isInitialized)
-          const SectionCard(
-            titleAr: 'التسميع معطّل',
-            titleEn: 'Recitation Disabled',
-            child: Text(
-              'أدخل مفتاح API بالأعلى واضغط "حفظ" لِتفعيل التسميع.\n'
-              'حتى بدون تفعيله، تعمل بِكامل ميزات التشغيل الصوتي.',
-              style: TextStyle(color: AppColors.textSecondary, height: 1.5),
-            ),
-          )
-        else ...[
-          // اختيار السورة/الآية / Surah & ayah selection
-          SectionCard(
+        Obx(() {
+          if (!_isReady.value) {
+            return const SectionCard(
+              titleAr: 'التسميع معطّل',
+              titleEn: 'Recitation Disabled',
+              child: Text(
+                'أدخل مفتاح API بالأعلى واضغط "حفظ" لِتفعيل التسميع.\n'
+                'حتى بدون تفعيله، تعمل بِكامل ميزات التشغيل الصوتي.',
+                style: TextStyle(color: AppColors.textSecondary, height: 1.5),
+              ),
+            );
+          }
+          return Column(
+            children: [
+              // اختيار السورة/الآية / Surah & ayah selection
+              SectionCard(
             titleAr: 'اختيار الآية',
             titleEn: 'Select Ayah',
             child: Column(
@@ -310,7 +314,9 @@ class _RecitationTabState extends State<RecitationTab> {
               );
             }),
           ),
-        ],
+            ],
+          );
+        }),
       ],
     );
   }
