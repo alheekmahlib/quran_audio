@@ -28,6 +28,10 @@ dependencies:
   # فك ضغط gzip عبر كل المنصات (بديل dart:io gzip غير المتوفر على الويب)
   # Cross-platform gzip (replaces dart:io gzip which is unavailable on web)
   archive: ^4.0.9
+  # التسميع (qurani.ai QRC) — اختياري، يُحمّل فقط عند Recitation.init()
+  # Recitation correction (qurani.ai QRC) — optional, lazy-loaded
+  web_socket_channel: ^3.0.0
+  record: ^6.0.0
 
 dev_dependencies:
   flutter_test:

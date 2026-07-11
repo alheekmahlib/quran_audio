@@ -55,6 +55,16 @@ export 'src/ayah_audio/ayah_audio_controller.dart';
 export 'src/constants/quran_constants.dart';
 export 'src/constants/storage_keys.dart';
 
+// التسميع (تصحيح التلاوة) — وحدة اختيارية، تتطلب Recitation.init(apiKey)
+// Recitation correction — optional module, requires Recitation.init(apiKey)
+export 'src/recitation/recitation.dart';
+export 'src/recitation/recitation_session.dart';
+export 'src/recitation/recitation_state.dart';
+export 'src/recitation/qrc_constants.dart';
+export 'src/recitation/models/qrc_config.dart';
+export 'src/recitation/models/qrc_feedback.dart';
+export 'src/recitation/models/qrc_method.dart';
+
 // إعادة تصدير حزم الصوت الأساسية لراحة المستخدم
 export 'package:just_audio/just_audio.dart';
 export 'package:audio_service/audio_service.dart';

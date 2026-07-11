@@ -187,6 +187,42 @@ Obx(() => Text(
             ],
           ),
         ),
+        SizedBox(height: 16),
+
+        // التسميع / Recitation
+        SectionCard(
+          titleAr: 'التسميع (تصحيح التلاوة)',
+          titleEn: 'Recitation Correction (optional)',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CodeSnippet(
+                descriptionAr: 'ميزة اختيارية — فعّلها بِمفتاح qurani.ai. بدونها '
+                    'تعمل كل ميزات التشغيل بِالكامل.',
+                descriptionEn: 'Optional feature — activate with a qurani.ai key. '
+                    'Without it, all playback features still work fully.',
+                code: '''Recitation.init(apiKey: 'YOUR_KEY');''',
+              ),
+              SizedBox(height: 8),
+              CodeSnippet(
+                descriptionAr: 'أنشئ جلسة تسميع واستمع للتصحيح الحيّ.',
+                descriptionEn: 'Create a recitation session and listen to live feedback.',
+                code: '''final session = Recitation.createSession(
+  config: QrcConfig(
+    chapterIndex: 1,
+    verseIndex: 1,
+  ),
+);
+session.feedbackStream.listen((fb) {
+  print('correct: \${fb.isCorrect}, raw: \${fb.raw}');
+});
+await session.start();
+// ... recite ...
+await session.stop();''',
+              ),
+            ],
+          ),
+        ),
         SizedBox(height: 24),
       ],
     );

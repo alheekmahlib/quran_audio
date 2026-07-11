@@ -4,6 +4,9 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<!-- وصف استخدام الميكروفون لِتبويب التسميع / Microphone usage for recitation -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>يُستخدم الميكروفون لتصحيح تلاوة القرآن الكريم عبر qurani.ai</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

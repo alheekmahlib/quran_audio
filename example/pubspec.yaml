@@ -12,6 +12,9 @@ dependencies:
     path: ../
   get: ^4.6.6
   get_storage: ^2.1.1
+  # للتسميع (تبويب التسميع) — تسجيل الميكروفون وطلب الصلاحية.
+  # For recitation (recitation tab) — mic recording + permission requests.
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:

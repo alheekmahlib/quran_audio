@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- صلاحية الميكروفون لِتبويب التسميع / Microphone permission for recitation -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="quran_audio_example"
         android:name="${applicationName}"

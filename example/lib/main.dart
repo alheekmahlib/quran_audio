@@ -14,9 +14,10 @@
 //
 // التبويبات مقسّمة لملفات منفصلة في lib/tabs/:
 // The tabs are split into separate files in lib/tabs/:
-//   - surah_tab.dart : تشغيل السور الكاملة / full-surah playback
-//   - ayah_tab.dart  : تشغيل الآيات بإدخال يدوي / ayah playback + manual input
-//   - guide_tab.dart : دليل الاستخدام / usage guide
+//   - surah_tab.dart      : تشغيل السور الكاملة / full-surah playback
+//   - ayah_tab.dart       : تشغيل الآيات بإدخال يدوي / ayah playback + manual input
+//   - guide_tab.dart      : دليل الاستخدام / usage guide
+//   - recitation_tab.dart : التسميع (تصحيح التلاوة) / recitation correction
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -24,6 +25,7 @@ import 'package:quran_audio/quran_audio.dart';
 
 import 'tabs/ayah_tab.dart';
 import 'tabs/guide_tab.dart';
+import 'tabs/recitation_tab.dart';
 import 'tabs/surah_tab.dart';
 import 'theme.dart';
 
@@ -54,7 +56,7 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Column(
@@ -71,6 +73,7 @@ class HomePage extends StatelessWidget {
             tabs: [
               Tab(text: 'السور'),
               Tab(text: 'الآيات'),
+              Tab(text: 'تسميع'),
               Tab(text: 'دليل الاستخدام'),
             ],
           ),
@@ -79,6 +82,7 @@ class HomePage extends StatelessWidget {
           children: [
             SurahTab(),
             AyahTab(),
+            RecitationTab(),
             GuideTab(),
           ],
         ),

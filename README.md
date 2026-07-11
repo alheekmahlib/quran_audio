@@ -61,6 +61,7 @@ A Flutter package for Quran audio playback — **logic only, no UI**. It support
 - [Notification Icon](#notification-icon)
 - [Offline Downloads](#offline-downloads)
 - [Repeat](#repeat)
+- [Recitation Correction (qurani.ai)](#recitation-correction-quraniai)
 - [Reading State (GetX)](#reading-state-getx)
 - [Metadata Helpers](#metadata-helpers)
 - [How it Works](#how-it-works)
@@ -435,6 +436,75 @@ QuranAudio.repeatAyahRange(   // Repeat a range of ayahs
 );
 QuranAudio.disableRepeat();   // Disable repeat
 ```
+
+## Recitation Correction (qurani.ai)
+
+An **optional** module for real-time Quran recitation correction (Tajweed feedback) via [qurani.ai](https://qurani.ai/en/docs/2-advanced-tools/qrc). It is **completely isolated** — the library works at 100% without it. It activates only after you call `Recitation.init(apiKey:)`.
+
+### Get an API key
+
+1. Subscribe at [qurani.ai](https://qurani.ai).
+2. Get your API key from the [dashboard](https://qurani.ai/en/dashboard).
+
+### Initialize (optional — once)
+
+```dart
+import 'package:quran_audio/quran_audio.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await QuranAudio.init();                 // playback (required)
+  Recitation.init(apiKey: 'YOUR_KEY');     // recitation (optional)
+  runApp(MyApp());
+}
+```
+
+Without `Recitation.init(...)`, the recitation module stays inert — no cost, no network, no permissions.
+
+### Run a recitation session
+
+```dart
+// 1) Create a session targeting a specific ayah
+final session = Recitation.createSession(
+  config: QrcConfig(
+    chapterIndex: 1,    // Al-Fatihah (1..114)
+    verseIndex: 1,      // first ayah
+    hafzLevel: 1,       // memorization strictness (default 1)
+    tajweedLevel: 1,    // tajweed strictness (default 1)
+  ),
+);
+
+// 2) Listen to live feedback
+session.feedbackStream.listen((QrcFeedback fb) {
+  print('correct: ${fb.isCorrect}, score: ${fb.score}, raw: ${fb.raw}');
+});
+
+// 3) Start (opens WS + sends StartTilawaSession + records mic + streams)
+await session.start();
+
+// ... the user recites — feedback arrives in real time ...
+
+// 4) Stop
+await session.stop();
+```
+
+### Session state (GetX)
+
+```dart
+final session = Recitation.createSession(config: cfg);
+session.state.listen((RecitationState s) {
+  // idle | connecting | recording | paused | processing | error | finished
+});
+```
+
+### Platform setup
+
+- **Android**: add `<uses-permission android:name="android.permission.RECORD_AUDIO"/>` to `AndroidManifest.xml`.
+- **iOS**: add `NSMicrophoneUsageDescription` to `Info.plist`.
+- **macOS**: add `com.apple.security.device.audio-input` to entitlements.
+- **Web**: the browser prompts for mic permission automatically.
+
+> ⚠️ **Documentation gaps**: some qurani.ai details (the exact `wss://` endpoint, the response JSON schema, the allowed ranges for `hafz_level`/`tajweed_level`) are not fully published. The client is designed defensively — `QrcFeedback.raw` holds the full server JSON, and you can override the WS URL/auth strategy via `Recitation.init(wsUrl:, authStrategy:)`. Calibrate these empirically once you have an API key.
 
 ## Reading State (GetX)
 
