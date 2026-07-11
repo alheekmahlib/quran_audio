@@ -27,7 +27,7 @@ dependencies:
   rxdart: ^0.28.0
   # فك ضغط gzip عبر كل المنصات (بديل dart:io gzip غير المتوفر على الويب)
   # Cross-platform gzip (replaces dart:io gzip which is unavailable on web)
-  archive: ^4.0.0
+  archive: ^4.0.9
 
 dev_dependencies:
   flutter_test:

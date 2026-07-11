@@ -1,3 +1,4 @@
+import 'dart:convert' show base64Encode;
 import 'dart:developer' show log;
 import 'dart:typed_data' show Uint8List;
 
@@ -34,26 +35,34 @@ class AudioArt {
   static Future<void> setFromAsset(String assetPath,
       {bool fallbackToDefault = true}) async {
     try {
-      if (kIsWeb) {
-        // على الويب لا يمكن نسخ ملف؛ استخدم resolve نسبي.
-        MediaItemBuilder.appIconUri = Uri.base.resolve(assetPath);
+      // على المنصات الأصلية: انسخ الملف لمجلد مؤقت ثم ابنِ Uri.file.
+      // Native: copy the file to a temp dir then build a Uri.file.
+      if (!kIsWeb) {
+        final byteData = await rootBundle.load(assetPath);
+        final tempDir = await PlatformIo.tempDir;
+        final fileName = assetPath.split('/').last;
+        final filePath = '$tempDir/$fileName';
+        final bytes = byteData.buffer
+            .asUint8List(byteData.offsetInBytes, byteData.lengthInBytes);
+        await PlatformIo.writeFile(filePath, Uint8List.fromList(bytes));
+
+        MediaItemBuilder.appIconUri = Uri.file(filePath);
         await MediaItemBuilder.refreshCurrentMediaItem();
+        log('AudioArt set from asset: $assetPath', name: 'AudioArt');
         return;
       }
 
-      // انسخ ملف الـ asset إلى مجلد مؤقت عبر PlatformIo (لا dart:io مباشرة).
-      // Copy the asset file to a temp directory via PlatformIo (no direct dart:io).
+      // على الويب: لا نظام ملفات ولا مسار asset صالح كرابط مباشر. حوّل الصورة
+      // إلى data URI (base64) — مستقل عن الخادم ولا يُسبّب 404.
+      // On web: no file system and the asset path isn't a valid direct URL.
+      // Convert the image to a base64 data URI — server-independent, no 404.
       final byteData = await rootBundle.load(assetPath);
-      final tempDir = await PlatformIo.tempDir;
-      final fileName = assetPath.split('/').last;
-      final filePath = '$tempDir/$fileName';
-      final bytes =
-          byteData.buffer.asUint8List(byteData.offsetInBytes, byteData.lengthInBytes);
-      await PlatformIo.writeFile(filePath, Uint8List.fromList(bytes));
-
-      MediaItemBuilder.appIconUri = Uri.file(filePath);
+      final bytes = byteData.buffer
+          .asUint8List(byteData.offsetInBytes, byteData.lengthInBytes);
+      MediaItemBuilder.appIconUri = _buildDataUri(bytes, assetPath);
       await MediaItemBuilder.refreshCurrentMediaItem();
-      log('AudioArt set from asset: $assetPath', name: 'AudioArt');
+      log('AudioArt set from asset (web data URI): $assetPath',
+          name: 'AudioArt');
     } catch (e, s) {
       log('AudioArt: failed to set asset "$assetPath": $e',
           name: 'AudioArt', stackTrace: s);
@@ -61,6 +70,23 @@ class AudioArt {
         await setDefault();
       }
     }
+  }
+
+  /// ابنِ data URI (base64) من البايتات حسب امتداد الملف (للويب).
+  ///
+  /// Build a base64 data URI from bytes based on the file extension (for web).
+  static Uri _buildDataUri(Uint8List bytes, String assetPath) {
+    final ext = assetPath.toLowerCase().split('.').last;
+    final mime = switch (ext) {
+      'png' => 'image/png',
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'gif' => 'image/gif',
+      'webp' => 'image/webp',
+      'svg' => 'image/svg+xml',
+      _ => 'image/png',
+    };
+    final b64 = base64Encode(bytes);
+    return Uri.parse('data:$mime;base64,$b64');
   }
 
   /// عيّن الأيقونة من رابط شبكي (http/https).
@@ -124,10 +150,12 @@ class AudioArt {
       return;
     }
 
-    // على الويب، اعتبره رابطاً نسبياً.
+    // على الويب، لا يمكن التعامل مع مسار ملف محلي — تجاهل بأمان.
+    // On web, a local file path cannot be resolved — skip safely.
     if (kIsWeb) {
-      MediaItemBuilder.appIconUri = Uri.base.resolve(ref);
-      await MediaItemBuilder.refreshCurrentMediaItem();
+      log('AudioArt: local file paths are not supported on web; '
+          'use setFromAsset or setFromUrl instead.',
+          name: 'AudioArt');
       return;
     }
 
