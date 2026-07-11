@@ -12,6 +12,7 @@
 // full structure with clear TODOs for the unconfirmed parts — to be completed
 // once you have an API key and live testing.
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -49,6 +50,13 @@ class _RecitationTabState extends State<RecitationTab> {
   }
 
   Future<bool> _ensureMicPermission() async {
+    // على الويب: المتصفح يطلب صلاحية الميكروفون تلقائياً عند بدء التسجيل
+    // عبر getUserMedia، فلا حاجة لِـ permission_handler (وهو غير مدعوم على الويب).
+    //
+    // On web: the browser auto-prompts for mic permission when recording
+    // starts via getUserMedia, so permission_handler is unnecessary (and
+    // unsupported) on web.
+    if (kIsWeb) return true;
     final status = await Permission.microphone.request();
     return status.isGranted;
   }
