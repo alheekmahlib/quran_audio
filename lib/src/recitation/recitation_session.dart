@@ -1,56 +1,39 @@
 import 'dart:async';
 import 'dart:developer' show log;
-import 'dart:typed_data' show Uint8List;
 
 import 'package:get/get.dart';
 import 'package:record/record.dart';
 
 import '../shared/platform_io.dart';
-import 'models/qrc_config.dart';
-import 'models/qrc_feedback.dart';
-import 'qrc_client.dart';
-import 'qrc_constants.dart';
+import 'models/muaalem_config.dart';
+import 'models/recitation_result.dart';
+import 'muaalem_client.dart';
 import 'recitation_state.dart';
 
-/// جلسة تسميع واحدة — تربط الميكروفون بِعميل qurani.ai WebSocket.
+/// جلسة تسميع واحدة — تسجّل WAV، تُرسله لِخادم quran-muaalem، تستلم التصحيح.
 ///
-/// A single recitation session — wires the microphone to the qurani.ai client.
+/// A single recitation session — records WAV, sends it to the quran-muaalem
+/// server, receives the correction.
 ///
-/// النمط: تسجيل Opus لِملف مؤقت، ثم بثّ الملف عبر WS بعد الإيقاف.
-/// qurani.ai يتوقع Opus؛ iOS/Android لا يدعمان Opus في streaming، لذا
-/// نسجّل لِملف (مدعوم) ثم نبثّه.
+/// النمط **batch** (وليس streaming): يُسجّل الصوت كاملاً في ملف مؤقّت أثناء
+/// التلاوة، ثم عند الإيقاف يُرسل الملف لِلخادم ويستلم النتيجة. هذا أبسط
+/// وأكثر موثوقية من streaming.
 ///
-/// Pattern: record Opus to a temp file, then stream the file over WS after stop.
-/// qurani.ai expects Opus; iOS/Android don't support Opus in streaming mode, so
-/// we record to a file (supported) then stream it.
-///
-/// دورة الحياة:
-/// 1. [start] — يفتح WS، يُرسل `start_tilawa_session`، يبدأ التسجيل لِملف Opus.
-/// 2. [feedbackStream] — التصحيح الوارد من الخادم بعد بثّ الصوت.
-/// 3. [stop] — يُوقف التسجيل، يقرأ الملف، يبثّه عبر WS، يُرسل `end_tilawa_session`.
-///
-/// Lifecycle:
-/// 1. [start] — opens WS, sends `start_tilawa_session`, starts recording to an Opus file.
-/// 2. [feedbackStream] — feedback from the server after audio is streamed.
-/// 3. [stop] — stops recording, reads the file, streams it over WS, sends `end_tilawa_session`.
+/// **Batch** pattern (not streaming): records the full audio to a temp file
+/// during recitation, then on stop sends the file to the server and receives
+/// the result. Simpler and more reliable than streaming.
 class RecitationSession {
   RecitationSession({
     required this.config,
-    required String apiKey,
-    String? wsUrl,
-    QrcAuthStrategy? authStrategy,
+    required MuaalemClient client,
     AudioRecorder? recorder,
-  })  : _apiKey = apiKey,
-        _wsUrl = wsUrl,
-        _authStrategy = authStrategy,
+  })  : _client = client,
         _recorder = recorder;
 
-  final QrcConfig config;
-  final String _apiKey;
-  final String? _wsUrl;
-  final QrcAuthStrategy? _authStrategy;
-
-  QrcClient? _client;
+  /// إعدادات المصحف (Hafs افتراضياً).
+  /// Moshaf config (Hafs by default).
+  final MuaalemConfig config;
+  final MuaalemClient _client;
   AudioRecorder? _recorder;
   bool _ownsRecorder = false;
   String? _recordingPath;
@@ -63,42 +46,53 @@ class RecitationSession {
   /// Last error (if any).
   final RxString lastError = ''.obs;
 
-  /// هل الجلسة مفتوحة؟ / Is the session open?
-  bool get isOpen => _client != null && _client!.isConnected;
+  /// نتيجة التصحيح (بعد stop).
+  /// Correction result (after stop).
+  final Rx<RecitationResult?> result = Rx<RecitationResult?>(null);
 
-  /// تدفّق التصحيح الوارد.
-  /// Incoming feedback stream.
-  Stream<QrcFeedback> get feedbackStream =>
-      _client?.feedbackStream ?? const Stream.empty();
-
-  /// ابدأ الجلسة: اتصل، أرسل start، ابدأ التسجيل لِملف Opus.
+  /// ابدأ التسجيل.
   ///
-  /// Start the session: connect, send start, begin recording to an Opus file.
+  /// Start recording.
+  ///
+  /// يُسجّل WAV (16kHz mono) إلى ملف مؤقّت. لا يُرسل شيئاً لِلخادم حتى [stop].
+  /// Records WAV (16kHz mono) to a temp file. Doesn't send anything to the
+  /// server until [stop].
   Future<void> start() async {
     if (state.value.isActive) {
       log('RecitationSession already active', name: 'RecitationSession');
       return;
     }
     try {
-      state.value = RecitationState.connecting;
+      result.value = null;
       lastError.value = '';
+      _recorder ??= AudioRecorder();
+      _ownsRecorder = true;
 
-      // 1) أنشئ العميل واتصل.
-      _client = QrcClient(
-        apiKey: _apiKey,
-        wsUrl: _wsUrl,
-        authStrategy: _authStrategy,
+      final hasMic = await _recorder!.hasPermission();
+      if (!hasMic) {
+        throw StateError('Microphone permission denied');
+      }
+
+      // WAV 16kHz mono — مدخل quran-muaalem المتوقَّع.
+      // WAV 16kHz mono — quran-muaalem's expected input.
+      const settings = RecordConfig(
+        encoder: AudioEncoder.wav,
+        sampleRate: 16000,
+        numChannels: 1,
+        autoGain: true,
+        echoCancel: true,
+        noiseSuppress: true,
       );
-      await _client!.connect();
 
-      // 2) أرسل رسالة بدء الجلسة (مرة واحدة).
-      _client!.sendJson(config.toStartPayload());
+      // أنشئ مساراً مؤقّتاً لِملف WAV (record v6 يتطلّب path مُسبقاً).
+      // Create a temp path for the WAV file (record v6 requires a path upfront).
+      final dir = await PlatformIo.tempDir;
+      _recordingPath = '$dir/recitation_${DateTime.now().millisecondsSinceEpoch}.wav';
 
-      // 3) ابدأ التسجيل لِملف Opus.
-      await _startRecording();
-
+      await _recorder!.start(settings, path: _recordingPath!);
       state.value = RecitationState.recording;
-      log('RecitationSession started: $config', name: 'RecitationSession');
+      log('RecitationSession started recording: $_recordingPath',
+          name: 'RecitationSession');
     } catch (e, s) {
       state.value = RecitationState.error;
       lastError.value = e.toString();
@@ -107,118 +101,68 @@ class RecitationSession {
     }
   }
 
-  /// ابدأ التسجيل لِملف Opus مؤقت.
-  /// Start recording to a temporary Opus file.
-  Future<void> _startRecording() async {
-    _recorder ??= AudioRecorder();
-    _ownsRecorder = true;
-
-    final hasMic = await _recorder!.hasPermission();
-    if (!hasMic) {
-      throw StateError('Microphone permission denied');
-    }
-
-    // حدّد مسار ملف مؤقت بصيغة opus (مغلّف ogg).
-    // Determine a temp file path in opus (ogg container) format.
-    final tempDir = await PlatformIo.tempDir;
-    _recordingPath = '$tempDir/quran_recitation_${DateTime.now().millisecondsSinceEpoch}.wav';
-
-    // إعدادات التسجيل — WAV أحادي 16kHz.
-    // WAV مدعوم على كل المنصات (iOS/Android/web/desktop). qurani.ai يفضّل Opus
-    // لكن WAV/PCM16 صيغة قياسية لِنماذج ASR وقد يُقبل.
-    //
-    // Recording settings — mono WAV at 16kHz.
-    // WAV is supported on all platforms (iOS/Android/web/desktop). qurani.ai
-    // prefers Opus, but WAV/PCM16 is a standard ASR format and may be accepted.
-    final settings = RecordConfig(
-      encoder: AudioEncoder.wav,
-      sampleRate: 16000,
-      numChannels: 1,
-      autoGain: true,
-      echoCancel: true,
-      noiseSuppress: true,
-    );
-
-    await _recorder!.start(settings, path: _recordingPath!);
-    log('Recording to WAV file: $_recordingPath', name: 'RecitationSession');
-  }
-
-  /// أوقف الجلسة: أوقف التسجيل، اقرأ الملف، ابثّه، أرسل end.
-  /// Stop the session: stop recording, read the file, stream it, send end.
+  /// أوقف التسجيل وأرسل الصوت لِخادم quran-muaalem لِلتصحيح.
+  ///
+  /// Stop recording and send the audio to the quran-muaalem server.
+  ///
+  /// يقرأ ملف WAV كاملاً، يُرسله عبر HTTP POST إلى `/correct-recitation`،
+  /// ويخزّن النتيجة في [result].
+  /// Reads the full WAV file, sends it via HTTP POST to
+  /// `/correct-recitation`, and stores the result in [result].
   Future<void> stop() async {
     try {
-      // 1) أوقف التسجيل وأخذ مسار الملف.
-      final path = await _recorder?.stop();
-      _recordingPath = path ?? _recordingPath;
       state.value = RecitationState.processing;
-      log('Recording stopped. File: $_recordingPath', name: 'RecitationSession');
+      _recordingPath = await _recorder?.stop() ?? _recordingPath;
+      log('RecitationSession stopped. Sending to server...',
+          name: 'RecitationSession');
 
-      // تحقق من وجود وحجم الملف قبل البثّ.
-      // Verify the file exists and has content before streaming.
       if (_recordingPath == null) {
-        log('No recording file path — nothing to stream.',
-            name: 'RecitationSession');
-        lastError.value = 'لم يُسجَّل أي صوت';
-      } else if (!await PlatformIo.fileExists(_recordingPath!)) {
-        log('Recording file does not exist: $_recordingPath',
-            name: 'RecitationSession');
-        lastError.value = 'ملف التسجيل غير موجود';
-      } else {
-        // 2) اقرأ الملف وابثّه عبر WS على دفعات.
-        if (_client != null) {
-          await _streamFileOverWs(_recordingPath!);
-        }
+        throw StateError('No recording file');
       }
 
-      // 3) أرسل رسالة إنهاء الجلسة.
-      _client?.sendJson(config.toEndPayload());
+      // اقرأ ملف WAV كاملاً.
+      // Read the full WAV file.
+      final wavBytes = await PlatformIo.readFile(_recordingPath!);
+      log('RecitationSession: read ${wavBytes.length} bytes',
+          name: 'RecitationSession');
+
+      // أرسل لِلخادم.
+      // Send to the server.
+      result.value = await _client.correctRecitation(
+        wavBytes: wavBytes,
+        config: config,
+      );
+
+      log('RecitationSession done: ${result.value}',
+          name: 'RecitationSession');
+      state.value = RecitationState.finished;
     } catch (e, s) {
+      state.value = RecitationState.error;
+      lastError.value = e.toString();
       log('RecitationSession stop error: $e',
           name: 'RecitationSession', stackTrace: s);
     } finally {
-      try {
-        if (_ownsRecorder) {
-          await _recorder?.dispose();
-        }
-        _recorder = null;
-        // احذف الملف المؤقت.
-        if (_recordingPath != null) {
+      // تنظيف: احذف الملف المؤقّت وتصرّف بالمسجّل.
+      // Cleanup: delete the temp file and dispose the recorder.
+      if (_recordingPath != null) {
+        try {
           await PlatformIo.deleteFile(_recordingPath!);
-        }
-        await _client?.close();
-        _client = null;
-      } catch (_) {}
-      state.value = RecitationState.finished;
-    }
-  }
-
-  /// اقرأ ملف الصوت وابثّه عبر WS على دفعات (chunks).
-  ///
-  /// Read the audio file and stream it over WS in chunks.
-  Future<void> _streamFileOverWs(String filePath) async {
-    try {
-      final bytes = await PlatformIo.readFile(filePath);
-      const chunkSize = 4096; // 4KB chunks
-      log('Streaming ${bytes.length} bytes of WAV audio over WS...',
-          name: 'RecitationSession');
-      for (int offset = 0; offset < bytes.length; offset += chunkSize) {
-        final end = (offset + chunkSize > bytes.length)
-            ? bytes.length
-            : offset + chunkSize;
-        _client?.sendAudioChunk(
-          Uint8List.sublistView(bytes, offset, end),
-        );
+        } catch (_) {}
       }
-      log('Finished streaming audio.', name: 'RecitationSession');
-    } catch (e, s) {
-      log('Failed to stream file: $e', name: 'RecitationSession',
-          stackTrace: s);
+      if (_ownsRecorder) {
+        try {
+          await _recorder?.dispose();
+        } catch (_) {}
+      }
+      _recorder = null;
     }
   }
 
   /// صرّح بالموارد فوراً إن لم تُستدعَ stop.
-  /// Release resources immediately if stop wasn't called.
+  /// Dispose resources immediately if stop wasn't called.
   void dispose() {
-    stop();
+    if (state.value == RecitationState.recording) {
+      stop();
+    }
   }
 }

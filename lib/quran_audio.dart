@@ -55,15 +55,16 @@ export 'src/ayah_audio/ayah_audio_controller.dart';
 export 'src/constants/quran_constants.dart';
 export 'src/constants/storage_keys.dart';
 
-// التسميع (تصحيح التلاوة) — وحدة اختيارية، تتطلب Recitation.init(apiKey)
-// Recitation correction — optional module, requires Recitation.init(apiKey)
+// التسميع (تصحيح التلاوة) — وحدة اختيارية، تتطلب Recitation.init(serverUrl)
+// Recitation correction — optional module, requires Recitation.init(serverUrl)
+// يستخدم خادم quran-muaalem self-hosted (انظر https://github.com/obadx/quran-muaalem)
+// Uses a self-hosted quran-muaalem server
 export 'src/recitation/recitation.dart';
 export 'src/recitation/recitation_session.dart';
 export 'src/recitation/recitation_state.dart';
-export 'src/recitation/qrc_constants.dart';
-export 'src/recitation/models/qrc_config.dart';
-export 'src/recitation/models/qrc_feedback.dart';
-export 'src/recitation/models/qrc_method.dart';
+export 'src/recitation/muaalem_client.dart';
+export 'src/recitation/models/muaalem_config.dart';
+export 'src/recitation/models/recitation_result.dart';
 
 // إعادة تصدير حزم الصوت الأساسية لراحة المستخدم
 export 'package:just_audio/just_audio.dart';

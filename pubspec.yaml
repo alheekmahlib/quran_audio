@@ -28,11 +28,11 @@ dependencies:
   # فك ضغط gzip عبر كل المنصات (بديل dart:io gzip غير المتوفر على الويب)
   # Cross-platform gzip (replaces dart:io gzip which is unavailable on web)
   archive: ^4.0.9
-  # التسميع (qurani.ai QRC) — اختياري، يُحمّل فقط عند Recitation.init()
-  # Recitation correction (qurani.ai QRC) — optional, lazy-loaded
-  # ملاحظة: مثبّت على 2.x لِتفادي objective_c FFI في web_socket 1.x على iOS.
-  # Note: pinned to 2.x to avoid the objective_c FFI in web_socket 1.x on iOS.
-  web_socket_channel: ^2.4.0
+  # التسميع (quran-muaalem) — اختياري، يُحمّل فقط عند Recitation.init()
+  # Recitation correction (quran-muaalem) — optional, lazy-loaded
+  # المكتبة عميل HTTP فقط — المستخدم يُشغّل خادم quran-muaalem على جهازه.
+  # The library is an HTTP client only — the user runs the quran-muaalem server
+  # on their own machine. See https://github.com/obadx/quran-muaalem
   record: ^6.0.0
 
 dev_dependencies:

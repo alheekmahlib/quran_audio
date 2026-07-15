@@ -45,6 +45,7 @@ class QuranAudioExampleApp extends StatelessWidget {
       title: 'Quran Audio Example',
       debugShowCheckedModeBanner: false,
       theme: appTheme(),
+      locale: const Locale('ar', 'SA'),
       home: const HomePage(),
     );
   }

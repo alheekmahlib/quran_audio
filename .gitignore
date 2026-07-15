@@ -50,3 +50,6 @@ app.*.map.json
 
 # ZCode agent session artifacts
 /.zcode/
+
+# LitServe auto-generated client (created by quran-muaalem server at runtime)
+/example/client.py
