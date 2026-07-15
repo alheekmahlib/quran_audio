@@ -61,7 +61,7 @@ A Flutter package for Quran audio playback — **logic only, no UI**. It support
 - [Notification Icon](#notification-icon)
 - [Offline Downloads](#offline-downloads)
 - [Repeat](#repeat)
-- [Recitation Correction (qurani.ai)](#recitation-correction-quraniai)
+- [Recitation Correction (quran-muaalem, self-hosted)](#recitation-correction-quran-muaalem-self-hosted)
 - [Reading State (GetX)](#reading-state-getx)
 - [Metadata Helpers](#metadata-helpers)
 - [How it Works](#how-it-works)
@@ -437,64 +437,185 @@ QuranAudio.repeatAyahRange(   // Repeat a range of ayahs
 QuranAudio.disableRepeat();   // Disable repeat
 ```
 
-## Recitation Correction (qurani.ai)
+## Recitation Correction (quran-muaalem, self-hosted)
 
-An **optional** module for real-time Quran recitation correction (Tajweed feedback) via [qurani.ai](https://qurani.ai/en/docs/2-advanced-tools/qrc). It is **completely isolated** — the library works at 100% without it. It activates only after you call `Recitation.init(apiKey:)`.
+An **optional** module for AI-powered Quran recitation correction with real-time
+tajweed feedback. It uses the open-source
+[`quran-muaalem`](https://github.com/obadx/quran-muaalem) model (MIT licensed,
+[Wav2Vec2-BERT 2.0](https://huggingface.co/obadx/muaalem-model-v3_2), ~2.4GB)
+and can detect 8+ tajweed rules (Qalqalah, Madd Tabee/Munfasel/Mottasel/Aared/Lazem/Leen,
+Ghunnah, Idgham, and more) plus letter attributes.
 
-### Get an API key
+It is **completely isolated** — the library works at 100% without it. It activates
+only after you call `Recitation.init(serverUrl:)` with a self-hosted server URL.
 
-1. Subscribe at [qurani.ai](https://qurani.ai).
-2. Get your API key from the [dashboard](https://qurani.ai/en/dashboard).
+### How it works
 
-### Initialize (optional — once)
+```
+Your Flutter app (client)              Your server (self-hosted)
+┌──────────────────────┐               ┌─────────────────────────────┐
+│  Recitation.start()  │   HTTP POST   │  quran-muaalem server       │
+│  → records WAV       │ ────────────► │  (Python, pip installable)  │
+│  → sends WAV         │   WAV + form  │  → ASR (Wav2Vec2-BERT)      │
+│                      │ ◄──────────── │  → tajweed error detection   │
+│  Recitation.stop()   │   JSON result │  → returns errors[]         │
+│  → displays errors   │               └─────────────────────────────┘
+└──────────────────────┘
+```
+
+The library is a **thin HTTP client** — it records WAV, sends it to your server,
+and displays the rich tajweed feedback. You run the model server yourself (no
+third-party API, no per-request cost, no rate limits).
+
+### Step 1: Run the quran-muaalem server
+
+The server is a Python package. You need:
+
+- **Python ≥ 3.10** (3.12 recommended)
+- **~3GB disk** (the model auto-downloads from HuggingFace on first run)
+- **≥ 16GB RAM** (CPU) or a GPU (recommended for real-time speed)
+
+Install and start (two terminals):
+
+```bash
+# Create a virtual environment (recommended)
+python3.12 -m venv ~/.quran-muaalem-venv
+source ~/.quran-muaalem-venv/bin/activate
+
+# Install the server with the engine extra
+pip install "quran-muaalem[engine]" librosa
+
+# Terminal 1: start the model server (port 8000)
+quran-muaalem-engine
+
+# Terminal 2: start the HTTP API (port 8001)
+quran-muaalem-app
+```
+
+> **Apple Silicon (M1/M2/M3/M4)**: add `ACCELERATOR=mps DTYPE=float32` before
+> `quran-muaalem-engine` to use the Metal GPU.
+>
+> **GPU server**: add `ACCELERATOR=cuda` (default) for NVIDIA GPUs.
+>
+> **Model download**: the ~2.4GB model
+> ([`obadx/muaalem-model-v3_2`](https://huggingface.co/obadx/muaalem-model-v3_2))
+> downloads automatically on first run from
+> [huggingface.co/obadx/muaalem-model-v3_2](https://huggingface.co/obadx/muaalem-model-v3_2).
+
+Verify the server is running:
+
+```bash
+curl http://localhost:8001/health
+# → {"status":"healthy","engine_status":"connected"}
+```
+
+### Step 2: Initialize in your app (optional — once)
 
 ```dart
 import 'package:quran_audio/quran_audio.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await QuranAudio.init();                 // playback (required)
-  Recitation.init(apiKey: 'YOUR_KEY');     // recitation (optional)
+  await QuranAudio.init();                              // playback (required)
+  Recitation.init(serverUrl: 'http://localhost:8001');  // recitation (optional)
   runApp(MyApp());
 }
 ```
 
-Without `Recitation.init(...)`, the recitation module stays inert — no cost, no network, no permissions.
+> The server URL depends on where you run it:
+> - **Same machine (desktop)**: `http://localhost:8001`
+> - **Simulator → Mac server**: `http://YOUR_MAC_IP:8001` (e.g. `http://10.0.0.11:8001`)
+> - **Remote server**: `https://your-server.com`
+> - **Device & server on same WiFi**: `http://SERVER_IP:8001`
 
-### Run a recitation session
+Without `Recitation.init(...)`, the recitation module stays inert — no cost, no
+network, no permissions.
+
+### Step 3: Run a recitation session
 
 ```dart
-// 1) Create a session targeting a specific ayah
-final session = Recitation.createSession(
-  config: QrcConfig(
-    chapterIndex: 1,    // Al-Fatihah (1..114)
-    verseIndex: 1,      // first ayah
-    hafzLevel: 1,       // memorization strictness (default 1)
-    tajweedLevel: 1,    // tajweed strictness (default 1)
-  ),
-);
+// 1) Create a session (Hafs moshaf by default)
+final session = Recitation.createSession();
 
-// 2) Listen to live feedback
-session.feedbackStream.listen((QrcFeedback fb) {
-  print('correct: ${fb.isCorrect}, score: ${fb.score}, raw: ${fb.raw}');
-});
-
-// 3) Start (opens WS + sends StartTilawaSession + records mic + streams)
+// 2) Start recording
 await session.start();
 
-// ... the user recites — feedback arrives in real time ...
+// ... the user recites ...
 
-// 4) Stop
+// 3) Stop and get the correction
 await session.stop();
+
+// 4) Read the result
+final result = session.result.value;
+print(result?.uthmaniText);       // "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ"
+print(result?.start?.suraIdx);    // 1
+print(result?.errors.length);     // number of errors
+
+for (final err in result?.errors ?? []) {
+  print(err.description);               // "المد العارض للسكون: المتوقع 4، الفعلي 2"
+  print(err.refTajweedRules);           // [TajweedRule(nameAr: "المد العارض للسكون", ...)]
+  print('expected: ${err.expectedPh}'); // "ۦۦۦۦ"
+  print('recited:  ${err.predictedPh}');// "ۦۦ"
+}
 ```
 
 ### Session state (GetX)
 
 ```dart
-final session = Recitation.createSession(config: cfg);
+final session = Recitation.createSession();
 session.state.listen((RecitationState s) {
-  // idle | connecting | recording | paused | processing | error | finished
+  // idle | recording | processing | error | finished
 });
+```
+
+### The result model
+
+```dart
+class RecitationResult {
+  final SurahAyahPosition? start;      // matched surah:ayah
+  final SurahAyahPosition? end;
+  final String? uthmaniText;           // the matched verse text
+  final String? predictedPhonemes;     // what the user actually said
+  final String? referencePhonemes;     // the correct reference
+  final List<RecitationError> errors;  // tajweed/pronunciation errors
+  final String? noMatchMessage;        // set if no Quran match found
+}
+
+class RecitationError {
+  final String errorType;       // 'tajweed' | 'normal' | 'tashkeel'
+  final String speechErrorType; // 'insert' | 'delete' | 'replace'
+  final String? expectedPh;     // expected phonemes
+  final String? predictedPh;    // actual phonemes recited
+  final int? expectedLen;       // expected length (harakat for madds)
+  final int? predictedLen;      // actual length
+  final List<TajweedRule> refTajweedRules;     // rules applied here
+  final List<TajweedRule> missingTajweedRules; // rules not applied
+  final List<TajweedRule> insertedTajweedRules;// extra rules added
+}
+
+class TajweedRule {
+  final String nameAr;   // e.g. "المد اللازم"
+  final String nameEn;   // e.g. "Lazem Madd"
+  final int? goldenLen;  // expected length (for madds)
+  final String? tag;     // 'alif' | 'waw' | 'yaa' ...
+}
+```
+
+### Custom moshaf settings
+
+By default the server uses Hafs. For other riwayat or moshaf settings:
+
+```dart
+final session = Recitation.createSession(
+  config: MuaalemConfig(
+    rewaya: 'hafs',              // 'hafs' | 'warsh' | 'qalon' ...
+    recitationSpeed: 'murattal', // 'murattal' | 'mujawwad'
+    maddMonfaselLen: 4,          // 2-5
+    maddMottaselLen: 4,          // 2-6
+    maddAaredLen: 4,             // 2-6
+    // ... ~30 fields, all default to standard Hafs
+  ),
+);
 ```
 
 ### Platform setup
@@ -504,7 +625,26 @@ session.state.listen((RecitationState s) {
 - **macOS**: add `com.apple.security.device.audio-input` to entitlements.
 - **Web**: the browser prompts for mic permission automatically.
 
-> ⚠️ **Documentation gaps**: some qurani.ai details (the exact `wss://` endpoint, the response JSON schema, the allowed ranges for `hafz_level`/`tajweed_level`) are not fully published. The client is designed defensively — `QrcFeedback.raw` holds the full server JSON, and you can override the WS URL/auth strategy via `Recitation.init(wsUrl:, authStrategy:)`. Calibrate these empirically once you have an API key.
+### Server deployment
+
+The `quran-muaalem` server can run anywhere Python runs:
+
+| Environment | RAM/GPU | Speed | Notes |
+|-------------|---------|-------|-------|
+| **Local machine** (dev/testing) | 16GB+ | 5-15s/ayah (CPU) | Best for development |
+| **VPS with GPU** (RunPod, Vast.ai) | T4/A10 | <1s/ayah | Best for production |
+| **HuggingFace Space** | 16GB free / 32GB+ paid | varies | See `deploy/hf-space/` in the repo |
+| **Docker** | varies | varies | Dockerize the pip install |
+
+See [`deploy/hf-space/`](deploy/hf-space/) in this repo for a ready HuggingFace
+Space deployment (Dockerfile + app.py).
+
+### References
+
+- **Model**: [`obadx/muaalem-model-v3_2`](https://huggingface.co/obadx/muaalem-model-v3_2) (download page)
+- **Server source**: [github.com/obadx/quran-muaalem](https://github.com/obadx/quran-muaalem)
+- **Paper**: [Automatic Pronunciation Error Detection and Correction of the Holy Quran's Learners Using Deep Learning](https://arxiv.org/abs/2509.00094) (arXiv 2509.00094)
+- **License**: MIT (both model and server)
 
 ## Reading State (GetX)
 

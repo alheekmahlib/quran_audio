@@ -1,0 +1,6 @@
+# نثبّت quran-muaalem أولاً ثم نحذف fastmcp التي تُسبّب bug في litserve
+# (litserve يفحص fastmcp لِتحديد توفّر MCP، لكن يستورد من mcp — عدم تطابق).
+# Install quran-muaalem first, then remove fastmcp which triggers a litserve bug
+# (litserve checks fastmcp for MCP availability, but imports from mcp — mismatch).
+quran-muaalem[engine]
+librosa
