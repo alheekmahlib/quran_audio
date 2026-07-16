@@ -21,6 +21,14 @@ import '../widgets.dart';
 const _kModelUrl =
     'https://github.com/alheekmahlib/quran_audio/releases/download/tajweed-model-v1/muaalem_student.int8.onnx';
 
+/// رابط تنزيل vocab (معجم الفونيمات + الصفات).
+const _kVocabUrl =
+    'https://github.com/alheekmahlib/quran_audio/releases/download/tajweed-model-v1/vocab_official.json';
+
+/// رابط تنزيل tokens (لِـ sherpa-onnx، اختياري).
+const _kTokensUrl =
+    'https://github.com/alheekmahlib/quran_audio/releases/download/tajweed-model-v1/tokens.txt';
+
 /// حجم النموذج التقريبي (لِعرضه قبل التحميل).
 const _kModelSizeMb = 95.3;
 
@@ -48,6 +56,7 @@ class _RecitationTabState extends State<RecitationTab> {
   final _isDownloading = false.obs;
   final _modelDownloaded = false.obs;
   String? _modelPath;
+  String? _vocabPath;
   String? _downloadError;
 
   @override
@@ -65,23 +74,35 @@ class _RecitationTabState extends State<RecitationTab> {
 
   // ═══════════════════════ Offline: Model Download ═══════════════════════
 
-  /// مسار النموذج المحلي (بعد التحميل).
-  Future<String> get _localModelPath async {
+  /// مجلد التخزين المحلي (مشترك لِـ النموذج + vocab).
+  Future<String> get _localDir async {
     final dir = await getApplicationSupportDirectory();
-    return '${dir.path}/muaalem_student.int8.onnx';
+    return dir.path;
   }
 
-  /// تحقّق إن كان النموذج محمّلاً مُسبقاً.
+  /// مسار النموذج المحلي (بعد التحميل).
+  Future<String> get _localModelPath async =>
+      '${await _localDir}/muaalem_student.int8.onnx';
+
+  /// مسار vocab المحلي.
+  Future<String> get _localVocabPath async =>
+      '${await _localDir}/vocab_official.json';
+
+  /// تحقّق إن كان النموذج + vocab محمّلَين مُسبقاً.
   Future<void> _checkModelExists() async {
-    final path = await _localModelPath;
-    final file = File(path);
-    if (await file.exists() && await file.length() > 80 * 1024 * 1024) {
-      _modelPath = path;
+    final modelFile = File(await _localModelPath);
+    final vocabFile = File(await _localVocabPath);
+    final modelOk =
+        await modelFile.exists() && await modelFile.length() > 80 * 1024 * 1024;
+    final vocabOk = await vocabFile.exists();
+    if (modelOk && vocabOk) {
+      _modelPath = await _localModelPath;
+      _vocabPath = await _localVocabPath;
       _modelDownloaded.value = true;
     }
   }
 
-  /// ينزّل النموذج من GitHub Release.
+  /// ينزّل النموذج + vocab + tokens من GitHub Release.
   Future<void> _downloadModel() async {
     if (_isDownloading.value || _modelDownloaded.value) return;
     _isDownloading.value = true;
@@ -89,22 +110,46 @@ class _RecitationTabState extends State<RecitationTab> {
     _downloadError = null;
 
     try {
-      final path = await _localModelPath;
       final dio = Dio();
+      final modelPath = await _localModelPath;
+      final vocabPath = await _localVocabPath;
+
+      // 1) النموذج (95MB) — يُمثّل ~95% من التقدّم
+      dev.log('downloadModel: fetching ONNX model…', name: 'RecitationTab');
       await dio.download(
         _kModelUrl,
-        path,
+        modelPath,
         onReceiveProgress: (received, total) {
           if (total > 0) {
-            _downloadProgress.value = received / total;
+            // النموذج = 0%→95% من الإجمالي
+            _downloadProgress.value = (received / total) * 0.95;
           }
         },
       );
-      _modelPath = path;
+      _modelPath = modelPath;
+
+      // 2) vocab (2KB) — سريع، 95%→100%
+      dev.log('downloadModel: fetching vocab…', name: 'RecitationTab');
+      _downloadProgress.value = 0.97;
+      await dio.download(_kVocabUrl, vocabPath);
+      _vocabPath = vocabPath;
+
+      // 3) tokens (اختياري — لِـ sherpa-onnx مستقبلاً)
+      dev.log('downloadModel: fetching tokens…', name: 'RecitationTab');
+      _downloadProgress.value = 0.99;
+      try {
+        await dio.download(_kTokensUrl, '${await _localDir}/tokens.txt');
+      } catch (_) {
+        // tokens اختياري — لا نُفشل التحميل إن تعذّر
+      }
+
+      _downloadProgress.value = 1.0;
       _modelDownloaded.value = true;
+      dev.log('downloadModel: done. model=$modelPath vocab=$vocabPath',
+          name: 'RecitationTab');
       Get.snackbar(
         'تمّ التحميل',
-        'النموذج جاهز (${_kModelSizeMb.toStringAsFixed(1)}MB)\n'
+        'النموذج + المعجم جاهزان.\n'
         'اضغط "تفعيل" لِبدء التسميع offline',
         snackPosition: SnackPosition.BOTTOM,
         duration: const Duration(seconds: 4),
@@ -126,20 +171,30 @@ class _RecitationTabState extends State<RecitationTab> {
   Future<void> _activateOffline() async {
     // تأكّد من وجود المسار — إن لم يكن، ابحث عنه
     _modelPath ??= await _localModelPath;
-    dev.log('activateOffline: modelPath=$_modelPath', name: 'RecitationTab');
+    _vocabPath ??= await _localVocabPath;
+    dev.log('activateOffline: modelPath=$_modelPath vocabPath=$_vocabPath',
+        name: 'RecitationTab');
     try {
       // تحقّق من وجود الملفّ قبل التفعيل
       final file = File(_modelPath!);
       final exists = await file.exists();
       final size = exists ? await file.length() : 0;
-      dev.log('activateOffline: exists=$exists, size=$size bytes',
+      final vocabExists = await File(_vocabPath!).exists();
+      dev.log('activateOffline: model exists=$exists size=$size, '
+          'vocab exists=$vocabExists',
           name: 'RecitationTab');
       if (!exists || size < 1024 * 1024) {
         throw Exception('ملفّ النموذج غير موجود أو تالف (size=$size). '
             'أعد تنزيل النموذج.');
       }
+      if (!vocabExists) {
+        throw Exception('ملفّ المعجم (vocab) غير موجود. أعد تنزيل النموذج.');
+      }
 
-      await Recitation.initOffline(modelPath: _modelPath);
+      await Recitation.initOffline(
+        modelPath: _modelPath,
+        vocabPath: _vocabPath,
+      );
       _mode.value = 'offline';
       _isReady.value = Recitation.isInitialized;
       dev.log('activateOffline: success, initialized=${Recitation.isInitialized}',
