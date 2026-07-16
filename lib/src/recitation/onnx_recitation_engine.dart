@@ -16,6 +16,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:developer' show log;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -52,38 +53,89 @@ class OnnxRecitationEngine implements RecitationEngine {
   // ── التهيئة ───────────────────────────────────────────────────
 
   /// تهيئة المحرّك — تحميل النموذج + vocab.
+  ///
+  /// تُطرح [Exception] بِرسالة واضحة عند الفشل (لِعرضها في الـ UI).
   Future<void> initialize() async {
     if (_initialized) return;
 
-    // 1) حمّل النموذج لِمسار مؤقّت (ONNX Runtime يحتاج ملفّاً)
+    log('OnnxRecitationEngine: initializing…', name: 'OnnxEngine');
+
+    // 1) حلّ مسار النموذج (بِأولويّة واضحة)
     _modelPath = await _resolveModelPath();
+    log('OnnxRecitationEngine: model path = $_modelPath', name: 'OnnxEngine');
 
     // 2) حمّل vocab
     await _loadVocab();
+    log('OnnxRecitationEngine: vocab loaded (${_phonemeIdToToken.length} tokens)',
+        name: 'OnnxEngine');
 
     // 3) أنشئ جلسة ONNX Runtime
-    final opts = OrtSessionOptions();
-    opts.setIntraOpNumThreads(2);
-    opts.setInterOpNumThreads(1);
-    _session = OrtSession.fromFile(File(_modelPath!), opts);
-    _outputNames = _session!.outputNames;
+    try {
+      final opts = OrtSessionOptions();
+      opts.setIntraOpNumThreads(2);
+      opts.setInterOpNumThreads(1);
+      _session = OrtSession.fromFile(File(_modelPath!), opts);
+      _outputNames = _session!.outputNames;
+      log('OnnxRecitationEngine: session created, ${_outputNames.length} outputs',
+          name: 'OnnxEngine');
+    } catch (e, s) {
+      log('OnnxRecitationEngine: FAILED to create session: $e',
+          name: 'OnnxEngine', stackTrace: s);
+      throw Exception('تعذّر تحميل النموذج: $e');
+    }
 
     _initialized = true;
+    log('OnnxRecitationEngine: ready ✓', name: 'OnnxEngine');
   }
 
+  /// يحلّ مسار النموذج بِأولويّة:
+  /// 1. مسار خارجي مُمرّر (modelAssetPath) إن وُجد.
+  /// 2. المسار الافتراضي في مجلد التطبيق (بعد تنزيله من Release).
+  /// 3. من assets (لو كان bundled — غير مُستخدَم حالياً).
+  ///
+  /// تُطرح [Exception] واضحة إن لم يُعثر على النموذج.
   Future<String> _resolveModelPath() async {
-    // إن أُعطي مسار ملفّ خارجي مباشرة
-    if (modelAssetPath != null && File(modelAssetPath!).existsSync()) {
-      return modelAssetPath!;
+    // 1) مسار خارجي مُمرّر صراحةً (الأولويّة القصوى)
+    if (modelAssetPath != null && modelAssetPath!.isNotEmpty) {
+      final f = File(modelAssetPath!);
+      if (await f.exists()) {
+        log('OnnxRecitationEngine: using provided model: ${modelAssetPath!} '
+            '(${await f.length()} bytes)',
+            name: 'OnnxEngine');
+        return modelAssetPath!;
+      }
+      log('OnnxRecitationEngine: provided path does not exist: ${modelAssetPath!}',
+          name: 'OnnxEngine', level: 900);
     }
-    // إن لم يكن، ابحث في assets → انسخ لِمجلد التطبيق
+
+    // 2) المسار الافتراضي (تنزيل المستخدم من Release)
     final appDir = await getApplicationSupportDirectory();
-    final dest = File('${appDir.path}/muaalem_student.int8.onnx');
-    if (!dest.existsSync()) {
-      final bytes = await rootBundle.load('assets/models/muaalem_student.int8.onnx');
-      await dest.writeAsBytes(bytes.buffer.asUint8List());
+    final defaultPath = '${appDir.path}/muaalem_student.int8.onnx';
+    final defaultFile = File(defaultPath);
+    if (await defaultFile.exists() && await defaultFile.length() > 1024 * 1024) {
+      log('OnnxRecitationEngine: using downloaded model: $defaultPath '
+          '(${await defaultFile.length()} bytes)',
+          name: 'OnnxEngine');
+      return defaultPath;
     }
-    return dest.path;
+
+    // 3) من assets (fallback — يتطلّب أن يكون bundled في pubspec)
+    try {
+      final bytes = await rootBundle.load('assets/models/muaalem_student.int8.onnx');
+      await defaultFile.writeAsBytes(bytes.buffer.asUint8List());
+      log('OnnxRecitationEngine: extracted from assets to $defaultPath',
+          name: 'OnnxEngine');
+      return defaultPath;
+    } catch (e) {
+      log('OnnxRecitationEngine: model NOT FOUND. provided=${modelAssetPath!}, '
+          'default=$defaultPath, assets=missing',
+          name: 'OnnxEngine', level: 1000);
+      throw Exception(
+        'النموذج غير موجود. حمّله أولاً عبر زر "تنزيل النموذج".\n'
+        'المسار المتوقّع: $defaultPath\n'
+        'التفاصيل: $e',
+      );
+    }
   }
 
   Future<void> _loadVocab() async {

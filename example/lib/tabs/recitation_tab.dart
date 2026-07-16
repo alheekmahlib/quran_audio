@@ -6,6 +6,8 @@
 
 import 'dart:io';
 
+import 'dart:developer' as dev;
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -122,19 +124,40 @@ class _RecitationTabState extends State<RecitationTab> {
 
   /// يُفعّل الوضع Offline.
   Future<void> _activateOffline() async {
-    if (_modelPath == null) return;
+    // تأكّد من وجود المسار — إن لم يكن، ابحث عنه
+    _modelPath ??= await _localModelPath;
+    dev.log('activateOffline: modelPath=$_modelPath', name: 'RecitationTab');
     try {
+      // تحقّق من وجود الملفّ قبل التفعيل
+      final file = File(_modelPath!);
+      final exists = await file.exists();
+      final size = exists ? await file.length() : 0;
+      dev.log('activateOffline: exists=$exists, size=$size bytes',
+          name: 'RecitationTab');
+      if (!exists || size < 1024 * 1024) {
+        throw Exception('ملفّ النموذج غير موجود أو تالف (size=$size). '
+            'أعد تنزيل النموذج.');
+      }
+
       await Recitation.initOffline(modelPath: _modelPath);
       _mode.value = 'offline';
       _isReady.value = Recitation.isInitialized;
+      dev.log('activateOffline: success, initialized=${Recitation.isInitialized}',
+          name: 'RecitationTab');
       Get.snackbar(
         'Offline جاهز',
         'النموذج محمّل على الجهاز. التسميع يعمل بدون إنترنت!',
         snackPosition: SnackPosition.BOTTOM,
       );
-    } catch (e) {
-      Get.snackbar('خطأ', 'تعذّر تحميل النموذج: $e',
-          snackPosition: SnackPosition.BOTTOM);
+    } catch (e, s) {
+      dev.log('activateOffline FAILED: $e',
+          name: 'RecitationTab', stackTrace: s);
+      Get.snackbar(
+        'خطأ في التفعيل',
+        '$e',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 8),
+      );
     }
   }
 
