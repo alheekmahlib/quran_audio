@@ -18,8 +18,9 @@ import '../theme.dart';
 import '../widgets.dart';
 
 /// رابط تنزيل النموذج من GitHub Release (مستودع quran_audio العام).
+/// نستخدم QDQ quantization (متوافق مع iOS/CoreML — لا يحوي ConvInteger).
 const _kModelUrl =
-    'https://github.com/alheekmahlib/quran_audio/releases/download/tajweed-model-v1/muaalem_student.int8.onnx';
+    'https://github.com/alheekmahlib/quran_audio/releases/download/tajweed-model-v1/muaalem_student.qdq.onnx';
 
 /// رابط تنزيل vocab (معجم الفونيمات + الصفات).
 const _kVocabUrl =
@@ -30,7 +31,7 @@ const _kTokensUrl =
     'https://github.com/alheekmahlib/quran_audio/releases/download/tajweed-model-v1/tokens.txt';
 
 /// حجم النموذج التقريبي (لِعرضه قبل التحميل).
-const _kModelSizeMb = 95.3;
+const _kModelSizeMb = 96.0;
 
 class RecitationTab extends StatefulWidget {
   const RecitationTab({super.key});
@@ -82,7 +83,7 @@ class _RecitationTabState extends State<RecitationTab> {
 
   /// مسار النموذج المحلي (بعد التحميل).
   Future<String> get _localModelPath async =>
-      '${await _localDir}/muaalem_student.int8.onnx';
+      '${await _localDir}/muaalem_student.qdq.onnx';
 
   /// مسار vocab المحلي.
   Future<String> get _localVocabPath async =>

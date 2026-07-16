@@ -110,19 +110,26 @@ class OnnxRecitationEngine implements RecitationEngine {
 
     // 2) المسار الافتراضي (تنزيل المستخدم من Release)
     final appDir = await getApplicationSupportDirectory();
-    final defaultPath = '${appDir.path}/muaalem_student.int8.onnx';
-    final defaultFile = File(defaultPath);
-    if (await defaultFile.exists() && await defaultFile.length() > 1024 * 1024) {
-      log('OnnxRecitationEngine: using downloaded model: $defaultPath '
-          '(${await defaultFile.length()} bytes)',
-          name: 'OnnxEngine');
-      return defaultPath;
+    // ندعم كلا الاسمَين: qdq (جديد) و int8 (قديم)
+    for (final name in [
+      'muaalem_student.qdq.onnx',
+      'muaalem_student.int8.onnx',
+    ]) {
+      final p = '${appDir.path}/$name';
+      final f = File(p);
+      if (await f.exists() && await f.length() > 1024 * 1024) {
+        log('OnnxRecitationEngine: using downloaded model: $p '
+            '(${await f.length()} bytes)',
+            name: 'OnnxEngine');
+        return p;
+      }
     }
 
     // 3) من assets (fallback — يتطلّب أن يكون bundled في pubspec)
+    final defaultPath = '${appDir.path}/muaalem_student.qdq.onnx';
     try {
-      final bytes = await rootBundle.load('assets/models/muaalem_student.int8.onnx');
-      await defaultFile.writeAsBytes(bytes.buffer.asUint8List());
+      final bytes = await rootBundle.load('assets/models/muaalem_student.qdq.onnx');
+      await File(defaultPath).writeAsBytes(bytes.buffer.asUint8List());
       log('OnnxRecitationEngine: extracted from assets to $defaultPath',
           name: 'OnnxEngine');
       return defaultPath;
