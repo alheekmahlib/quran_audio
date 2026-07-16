@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 
 import 'models/muaalem_config.dart';
 import 'models/recitation_result.dart';
+import 'recitation_engine.dart';
 
 /// عميل HTTP لِخادم quran-muaalem.
 ///
@@ -22,7 +23,7 @@ import 'models/recitation_result.dart';
 /// ```dart
 /// final client = MuaalemClient(baseUrl: 'http://localhost:8001');
 /// ```
-class MuaalemClient {
+class MuaalemClient implements RecitationEngine {
   MuaalemClient({
     required this.baseUrl,
     Duration? connectTimeout,
@@ -50,6 +51,7 @@ class MuaalemClient {
   /// [wavBytes] - WAV file bytes (16kHz mono preferred).
   /// [config] - moshaf config (default: Hafs).
   /// [errorRatio] - max error ratio for search (0.0-1.0, default 0.1).
+  @override
   Future<RecitationResult> correctRecitation({
     required Uint8List wavBytes,
     MuaalemConfig config = const MuaalemConfig(),
@@ -129,6 +131,7 @@ class MuaalemClient {
   /// تحقّق من صحة الخادم (هل هو يعمل والنموذج محمّل؟).
   ///
   /// Check server health (is it running and the model loaded?).
+  @override
   Future<bool> isHealthy() async {
     try {
       final response = await _dio.get<dynamic>('/health');
@@ -141,6 +144,7 @@ class MuaalemClient {
 
   /// أغلق العميل وحرّر الموارد.
   /// Close the client and release resources.
+  @override
   void dispose() {
     _dio.close();
   }

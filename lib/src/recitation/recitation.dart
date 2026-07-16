@@ -2,62 +2,76 @@ import 'dart:developer' show log;
 
 import 'models/muaalem_config.dart';
 import 'muaalem_client.dart';
+import 'onnx_recitation_engine.dart';
+import 'recitation_engine.dart';
 import 'recitation_session.dart';
 
-/// نقطة الدخول العامة لِميزة التسميع (تصحيح التلاوة) عبر خادم quran-muaalem.
+/// نقطة الدخول العامة لِميزة التسميع (تصحيح التلاوة).
 ///
-/// Facade for the recitation-correction feature via a quran-muaalem server.
+/// Facade for the recitation-correction feature.
+///
+/// تدعم الوحدة محرّكَين:
+/// - **Online** (افتراضي): خادم [quran-muaalem](https://github.com/obadx/quran-muaalem)
+///   عبر [init] + [serverUrl].
+/// - **Offline**: نموذج ONNX محلي (95MB) يُحمَّل على الجهاز عبر
+///   [initOffline] — لا يحتاج خادماً ولا إنترنت.
 ///
 /// هذه الوحدة **اختيارية تماماً**: لا تُحمّل ولا تستهلك موارداً حتى تستدعي
-/// [init] بِعنوان خادم quran-muaalem. من لا يستخدم التسميع، لا يتأثر إطلاقاً.
+/// [init] أو [initOffline].
 ///
-/// This module is **entirely optional**: not loaded and consumes no resources
-/// until you call [init] with a quran-muaalem server URL.
+/// ## Online / Setup
 ///
-/// ## الإعداد / Setup
-///
-/// شغّل خادم quran-muaalem على جهازك أو خادمك:
 /// ```bash
 /// pip install "quran-muaalem[engine]"
 /// quran-muaalem-engine  # منفذ 8000 (النموذج)
 /// quran-muaalem-app     # منفذ 8001 (HTTP API)
 /// ```
 ///
-/// ثم في تطبيقك:
 /// ```dart
-/// // 1) فعّل الوحدة مرة واحدة:
 /// Recitation.init(serverUrl: 'http://localhost:8001');
-///
-/// // 2) أنشئ جلسة وابدأ التسجيل:
 /// final session = Recitation.createSession();
 /// await session.start();
-/// // ... يتلو المستخدم ...
+/// // ... تلاوة ...
 /// await session.stop();
-/// print(session.result.value?.errors);  // أخطاء التجويد!
+/// print(session.result.value?.errors);
+/// ```
+///
+/// ## Offline / Setup
+///
+/// ```dart
+/// await Recitation.initOffline();  // يحمل النموذج من assets
+/// final session = Recitation.createSession();
+/// await session.start();
+/// // ... تلاوة (بدون إنترنت!) ...
+/// await session.stop();
+/// print(session.result.value?.predictedPhonemes);
 /// ```
 class Recitation {
   Recitation._();
 
-  static MuaalemClient? _client;
+  static RecitationEngine? _engine;
   static String? _serverUrl;
+  static bool _isOffline = false;
 
-  /// هل الوحدة مهيّأة (تم تمرير عنوان خادم)؟
-  /// Is the module initialized (a server URL was provided)?
-  static bool get isInitialized => _client != null;
+  /// هل الوحدة مهيّأة؟
+  /// Is the module initialized?
+  static bool get isInitialized => _engine != null;
 
-  /// عنوان الخادم الحالي (لِلقراءة فقط) أو null.
-  /// The current server URL (read-only) or null.
+  /// هل المحرّك offline (ONNX)؟
+  /// Is the engine offline (ONNX)?
+  static bool get isOffline => _isOffline;
+
+  /// عنوان الخادم (online) أو null.
+  /// The server URL (online) or null.
   static String? get serverUrl => _serverUrl;
 
-  /// هيّئ وحدة التسميع بِعنوان خادم quran-muaalem.
+  // ── Online ──────────────────────────────────────────────────
+
+  /// هيّئ وحدة التسميع بِخادم quran-muaalem (online).
   ///
-  /// Initialize the recitation module with a quran-muaalem server URL.
+  /// Initialize the recitation module with a quran-muaalem server (online).
   ///
-  /// [serverUrl] - عنوان خادم quran-muaalem (مثل `http://localhost:8001`
-  ///   لِخادم محلي، أو `https://your-server.com` لِخادم بعيد).
-  ///
-  /// [serverUrl] - the quran-muaalem server URL (e.g. `http://localhost:8001`
-  ///   for a local server, or `https://your-server.com` for a remote one).
+  /// [serverUrl] - عنوان الخادم (مثل `http://localhost:8001`).
   static void init({required String serverUrl}) {
     final trimmed = serverUrl.trim();
     if (trimmed.isEmpty) {
@@ -65,62 +79,90 @@ class Recitation {
           name: 'Recitation');
       return;
     }
-    _client?.dispose();
-    _client = MuaalemClient(baseUrl: trimmed);
+    _engine?.dispose();
+    _engine = MuaalemClient(baseUrl: trimmed);
     _serverUrl = trimmed;
-    log('Recitation initialized. serverUrl=$trimmed', name: 'Recitation');
+    _isOffline = false;
+    log('Recitation initialized (online). serverUrl=$trimmed',
+        name: 'Recitation');
   }
 
-  /// أعد ضبط الوحدة (نسيان الخادم).
-  /// Reset the module (forget the server).
-  static void reset() {
-    _client?.dispose();
-    _client = null;
+  // ── Offline ─────────────────────────────────────────────────
+
+  /// هيّئ وحدة التسميع بِنموذج ONNX محلي (offline — لا إنترنت).
+  ///
+  /// Initialize the recitation module with a local ONNX model (offline).
+  ///
+  /// [modelPath] - مسار النموذج (إن null، يُحمَّل من assets).
+  /// [vocabPath] - مسار vocab (إن null، من assets).
+  ///
+  /// يعمل على الأجهزة المحمولة وسطح المكتب (لا يدعم الويب).
+  static Future<void> initOffline({
+    String? modelPath,
+    String? vocabPath,
+  }) async {
+    _engine?.dispose();
+    final onnxEngine = OnnxRecitationEngine(
+      modelAssetPath: modelPath,
+      vocabAssetPath: vocabPath,
+    );
+    await onnxEngine.initialize();
+    _engine = onnxEngine;
     _serverUrl = null;
+    _isOffline = true;
+    log('Recitation initialized (offline, ONNX).', name: 'Recitation');
   }
 
-  /// تحقّق من صحة الخادم (هل يعمل والنموذج محمّل؟).
-  ///
-  /// Check server health (is it running and the model loaded?).
-  ///
-  /// استدعِ هذا قبل [createSession] للتأكّد من أنّ الخادم جاهز.
-  /// Call this before [createSession] to verify the server is ready.
-  static Future<bool> isServerHealthy() async {
-    if (_client == null) return false;
-    return _client!.isHealthy();
+  // ── مشترك ───────────────────────────────────────────────────
+
+  /// أعد ضبط الوحدة (نسيان المحرّك).
+  /// Reset the module (forget the engine).
+  static void reset() {
+    _engine?.dispose();
+    _engine = null;
+    _serverUrl = null;
+    _isOffline = false;
   }
+
+  /// تحقّق من جاهزية المحرّك.
+  ///
+  /// Check engine health (server online / model offline).
+  static Future<bool> isEngineHealthy() async {
+    if (_engine == null) return false;
+    return _engine!.isHealthy();
+  }
+
+  /// تحقّق من صحة الخادم (متوافق مع الإصدارات السابقة — للـ online).
+  ///
+  /// Check server health (backward-compatible alias for [isEngineHealthy]).
+  static Future<bool> isServerHealthy() => isEngineHealthy();
 
   /// أنشئ جلسة تسميع جديدة.
   ///
   /// Create a new recitation session.
   ///
-  /// تتطلّب تهيئة مسبقة عبر [init]، وإلا تُطرح [StateError].
-  /// Requires prior initialization via [init], otherwise throws [StateError].
-  ///
-  /// [config] - إعدادات المصحف (افتراضي: Hafs). عدّلها لِمصاحف أخرى.
-  /// [config] - moshaf config (default: Hafs). Change for other moshafs.
+  /// تتطلّب تهيئة مسبقة عبر [init] أو [initOffline].
   static RecitationSession createSession({
     MuaalemConfig config = const MuaalemConfig(),
   }) {
     _ensureInitialized();
     return RecitationSession(
       config: config,
-      client: _client!,
+      engine: _engine!,
     );
   }
 
-  /// تحقّق من التهيئة، وإلا اطرح خطأ واضحاً.
-  /// Ensure initialization, else throw a clear error.
   static void _ensureInitialized() {
     if (!isInitialized) {
       throw StateError(
-        'Recitation is not initialized. Call '
-        'Recitation.init(serverUrl: "http://localhost:8001") first.\n'
-        'To run the quran-muaalem server:\n'
+        'Recitation is not initialized. Call one of:\n'
+        '  Recitation.init(serverUrl: "http://localhost:8001")  // online\n'
+        '  await Recitation.initOffline()                       // offline\n'
+        '\n'
+        'Online server setup:\n'
         '  pip install "quran-muaalem[engine]"\n'
-        '  quran-muaalem-engine  # port 8000\n'
-        '  quran-muaalem-app     # port 8001\n'
-        'See: https://github.com/obadx/quran-muaalem',
+        '  quran-muaalem-engine && quran-muaalem-app\n'
+        'Offline model: bundled in assets/models/',
       );
     }
   }

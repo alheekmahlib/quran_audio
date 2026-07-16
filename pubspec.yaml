@@ -30,10 +30,12 @@ dependencies:
   archive: ^4.0.9
   # التسميع (quran-muaalem) — اختياري، يُحمّل فقط عند Recitation.init()
   # Recitation correction (quran-muaalem) — optional, lazy-loaded
-  # المكتبة عميل HTTP فقط — المستخدم يُشغّل خادم quran-muaalem على جهازه.
-  # The library is an HTTP client only — the user runs the quran-muaalem server
-  # on their own machine. See https://github.com/obadx/quran-muaalem
+  # يدعم وضعَين: online (خادم quran-muaalem) و offline (نموذج ONNX محلي).
+  # Supports two modes: online (quran-muaalem server) and offline (local ONNX).
   record: ^6.0.0
+  # الاستدلال offline — ONNX Runtime لِتشغيل نموذج التجويد على الجهاز.
+  # Offline inference — ONNX Runtime for on-device tajweed model.
+  onnxruntime: ^1.4.1
 
 dev_dependencies:
   flutter_test:
@@ -44,6 +46,10 @@ flutter:
   assets:
     - assets/jsons/
     - assets/images/
+    # نموذج التجويد offline (ONNX int8، 95MB) — يُحمَّل من GitHub Release
+    # لاحقاً، لكن tokens + vocab خفيفة ومُضمَّنة هنا لِلاستخدام الفوري.
+    - assets/models/tokens.txt
+    - assets/models/vocab_official.json
 
 # إعلان المنصات المدعومة رسمياً على pub.dev / Declares supported platforms
 platforms:

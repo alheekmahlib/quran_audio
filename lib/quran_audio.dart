@@ -55,13 +55,16 @@ export 'src/ayah_audio/ayah_audio_controller.dart';
 export 'src/constants/quran_constants.dart';
 export 'src/constants/storage_keys.dart';
 
-// التسميع (تصحيح التلاوة) — وحدة اختيارية، تتطلب Recitation.init(serverUrl)
-// Recitation correction — optional module, requires Recitation.init(serverUrl)
-// يستخدم خادم quran-muaalem self-hosted (انظر https://github.com/obadx/quran-muaalem)
-// Uses a self-hosted quran-muaalem server
+// التسميع (تصحيح التلاوة) — وحدة اختيارية.
+// Recitation correction — optional module.
+// يدعم وضعَين: online (خادم quran-muaalem) و offline (نموذج ONNX محلي 95MB).
+// Supports two modes: online (quran-muaalem server) and offline (local ONNX).
 export 'src/recitation/recitation.dart';
+export 'src/recitation/recitation_engine.dart';
 export 'src/recitation/recitation_session.dart';
 export 'src/recitation/recitation_state.dart';
+export 'src/recitation/onnx_recitation_engine.dart';
+export 'src/recitation/wav_decoder.dart';
 export 'src/recitation/muaalem_client.dart';
 export 'src/recitation/models/muaalem_config.dart';
 export 'src/recitation/models/recitation_result.dart';

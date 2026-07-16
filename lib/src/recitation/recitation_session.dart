@@ -7,33 +7,34 @@ import 'package:record/record.dart';
 import '../shared/platform_io.dart';
 import 'models/muaalem_config.dart';
 import 'models/recitation_result.dart';
-import 'muaalem_client.dart';
+import 'recitation_engine.dart';
 import 'recitation_state.dart';
 
-/// جلسة تسميع واحدة — تسجّل WAV، تُرسله لِخادم quran-muaalem، تستلم التصحيح.
+/// جلسة تسميع واحدة — تسجّل WAV، تُرسله لِلمحرّك (online أو offline)،
+/// تستلم التصحيح.
 ///
-/// A single recitation session — records WAV, sends it to the quran-muaalem
-/// server, receives the correction.
+/// A single recitation session — records WAV, sends it to the engine (online
+/// or offline), receives the correction.
 ///
 /// النمط **batch** (وليس streaming): يُسجّل الصوت كاملاً في ملف مؤقّت أثناء
-/// التلاوة، ثم عند الإيقاف يُرسل الملف لِلخادم ويستلم النتيجة. هذا أبسط
+/// التلاوة، ثم عند الإيقاف يُمرّره لِلمحرّك ويستلم النتيجة. هذا أبسط
 /// وأكثر موثوقية من streaming.
 ///
 /// **Batch** pattern (not streaming): records the full audio to a temp file
-/// during recitation, then on stop sends the file to the server and receives
-/// the result. Simpler and more reliable than streaming.
+/// during recitation, then on stop passes it to the engine and receives the
+/// result. Simpler and more reliable than streaming.
 class RecitationSession {
   RecitationSession({
     required this.config,
-    required MuaalemClient client,
+    required RecitationEngine engine,
     AudioRecorder? recorder,
-  })  : _client = client,
+  })  : _engine = engine,
         _recorder = recorder;
 
   /// إعدادات المصحف (Hafs افتراضياً).
   /// Moshaf config (Hafs by default).
   final MuaalemConfig config;
-  final MuaalemClient _client;
+  final RecitationEngine _engine;
   AudioRecorder? _recorder;
   bool _ownsRecorder = false;
   String? _recordingPath;
@@ -101,14 +102,14 @@ class RecitationSession {
     }
   }
 
-  /// أوقف التسجيل وأرسل الصوت لِخادم quran-muaalem لِلتصحيح.
+  /// أوقف التسجيل ومرّر الصوت لِلمحرّك لِلتصحيح.
   ///
-  /// Stop recording and send the audio to the quran-muaalem server.
+  /// Stop recording and pass the audio to the engine for correction.
   ///
-  /// يقرأ ملف WAV كاملاً، يُرسله عبر HTTP POST إلى `/correct-recitation`،
+  /// يقرأ ملف WAV كاملاً، يُمرّره لِلمحرّك (online: HTTP، offline: ONNX)،
   /// ويخزّن النتيجة في [result].
-  /// Reads the full WAV file, sends it via HTTP POST to
-  /// `/correct-recitation`, and stores the result in [result].
+  /// Reads the full WAV file, passes it to the engine (online: HTTP,
+  /// offline: ONNX), and stores the result in [result].
   Future<void> stop() async {
     try {
       state.value = RecitationState.processing;
@@ -126,9 +127,9 @@ class RecitationSession {
       log('RecitationSession: read ${wavBytes.length} bytes',
           name: 'RecitationSession');
 
-      // أرسل لِلخادم.
-      // Send to the server.
-      result.value = await _client.correctRecitation(
+      // مرّر لِلمحرّك (online: خادم، offline: ONNX).
+      // Pass to the engine (online: server, offline: ONNX).
+      result.value = await _engine.correctRecitation(
         wavBytes: wavBytes,
         config: config,
       );

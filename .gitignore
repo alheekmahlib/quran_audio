@@ -54,3 +54,5 @@ app.*.map.json
 # LitServe auto-generated client (created by quran-muaalem server at runtime)
 /example/client.py
 /client.py
+# ONNX models (downloaded from GitHub Release, not committed)
+assets/models/*.onnx
