@@ -44,6 +44,11 @@ class _RecitationTabState extends State<RecitationTab> {
   // ── Online ──
   final _urlCtrl = TextEditingController(text: 'http://localhost:8001');
 
+  // ─ـ النصّ المرجعي (offline) ──
+  final _refTextCtrl = TextEditingController(
+    text: 'بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ',
+  );
+
   // ─ـ مشترك ──
   final _isReady = false.obs;
   final _isRecording = false.obs;
@@ -69,6 +74,7 @@ class _RecitationTabState extends State<RecitationTab> {
   @override
   void dispose() {
     _urlCtrl.dispose();
+    _refTextCtrl.dispose();
     _session?.dispose();
     super.dispose();
   }
@@ -246,7 +252,12 @@ class _RecitationTabState extends State<RecitationTab> {
     }
     _result.value = null;
     _isRecording.value = true;
-    _session = Recitation.createSession();
+    // في الوضع offline، مُرّر النصّ المرجعي لِتمكين أخطاء التجويد.
+    // في الوضع online، يُتجاهل (الخادم يبحث في القرآن كاملاً).
+    final ref = _refTextCtrl.text.trim();
+    _session = Recitation.createSession(
+      referenceText: ref.isEmpty ? null : ref,
+    );
     _session!.state.listen((s) {
       _isRecording.value = s == RecitationState.recording;
       _sessionState.value = s;
@@ -592,6 +603,35 @@ class _RecitationTabState extends State<RecitationTab> {
   Widget _recitationControls({required bool isOffline}) {
     return Column(
       children: [
+        // حقل النصّ المرجعي (offline فقط — لِتمكين مقارنة التجويد)
+        if (isOffline)
+          SectionCard(
+            titleAr: 'الآية المُتوقَّعة',
+            titleEn: 'Expected Verse',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'اكتب الآية التي ستتلوها (offline) لِمقارنة الفونيمات '
+                  'وكشف صفات التجويد.',
+                  style:
+                      TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.5),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _refTextCtrl,
+                  maxLines: 2,
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
+                  decoration: const InputDecoration(
+                    hintText: 'بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ',
+                    prefixIcon: Icon(Icons.menu_book_rounded, size: 20),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (isOffline) const SizedBox(height: 16),
         SectionCard(
           titleAr: 'التلاوة',
           titleEn: 'Recite',

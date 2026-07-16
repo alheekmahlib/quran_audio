@@ -28,12 +28,21 @@ class RecitationSession {
     required this.config,
     required RecitationEngine engine,
     AudioRecorder? recorder,
+    this.referenceText,
   })  : _engine = engine,
         _recorder = recorder;
 
   /// إعدادات المصحف (Hafs افتراضياً).
   /// Moshaf config (Hafs by default).
   final MuaalemConfig config;
+
+  /// النصّ المرجعي (اختياري، offline) — نصّ الآية العثماني المُتوقَّع.
+  /// إن أُعطي، يُقارن المحرّك offline الفونيمات المتوقَّعة بِفونيمات هذا
+  /// النصّ ويُنتج أخطاء تجويد مُفصّلة. يُتجاهل في الوضع online.
+  ///
+  /// Optional reference text (offline) — expected Uthmani verse text.
+  final String? referenceText;
+
   final RecitationEngine _engine;
   AudioRecorder? _recorder;
   bool _ownsRecorder = false;
@@ -132,6 +141,7 @@ class RecitationSession {
       result.value = await _engine.correctRecitation(
         wavBytes: wavBytes,
         config: config,
+        referenceText: referenceText,
       );
 
       log('RecitationSession done: ${result.value}',

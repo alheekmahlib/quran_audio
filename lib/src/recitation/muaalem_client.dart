@@ -56,6 +56,7 @@ class MuaalemClient implements RecitationEngine {
     required Uint8List wavBytes,
     MuaalemConfig config = const MuaalemConfig(),
     double errorRatio = 0.1,
+    String? referenceText, // @unusedVar — الخادم يبحث في القرآن كاملاً
   }) async {
     final form = FormData();
     form.files.add(MapEntry(

@@ -20,10 +20,14 @@ abstract interface class RecitationEngine {
   /// [wavBytes] بيانات ملفّ WAV (16kHz mono).
   /// [config] إعدادات المصحف (Hafs/Warsh، أطوال المدود...).
   /// [errorRatio] نسبة التسامح في المطابقة (0-1).
+  /// [referenceText] (اختياري، offline) نصّ الآية العثماني المُتوقَّع —
+  ///   إن أُعطي، يُقارن النموذج الفونيمات المتوقَّعة بِفونيمات النصّ المرجعي
+  ///   ويُنتج أخطاء تجويد مُفصّلة. إن لم يُعطَ، يُعيد الفونيمات المتوقَّعة فقط.
   Future<RecitationResult> correctRecitation({
     required final Uint8List wavBytes,
     final MuaalemConfig config = const MuaalemConfig(),
     final double errorRatio = 0.1,
+    final String? referenceText,
   });
 
   /// هل المحرّك جاهز لِلاستخدام؟ (خادم صحّي / نموذج محمّل).

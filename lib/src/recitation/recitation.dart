@@ -142,13 +142,18 @@ class Recitation {
   /// Create a new recitation session.
   ///
   /// تتطلّب تهيئة مسبقة عبر [init] أو [initOffline].
+  ///
+  /// [referenceText] (اختياري، offline فقط) نصّ الآية العثماني المُتوقَّع.
+  ///   يُمكّن المحرّك offline من مقارنة الفونيمات وإنتاج أخطاء تجويد.
   static RecitationSession createSession({
     MuaalemConfig config = const MuaalemConfig(),
+    String? referenceText,
   }) {
     _ensureInitialized();
     return RecitationSession(
       config: config,
       engine: _engine!,
+      referenceText: referenceText,
     );
   }
 
