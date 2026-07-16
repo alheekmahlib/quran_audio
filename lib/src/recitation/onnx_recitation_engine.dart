@@ -218,7 +218,7 @@ class OnnxRecitationEngine implements RecitationEngine {
       [1, n],
     );
     final mask = OrtValueTensor.createTensorWithDataList(
-      Int32List.sublistView(Int32List(n)..fillRange(0, n, 1)),
+      Int64List.fromList(List<int>.filled(n, 1)),
       [1, n],
     );
 
