@@ -170,9 +170,15 @@ class RecitationError {
   /// وصف مختصر لِلخطأ بِالعربية.
   /// Brief error description in Arabic.
   String get description {
-    final rules = refTajweedRules;
-    if (rules.isNotEmpty) {
-      final ruleName = rules.first.nameAr;
+    // ابحث عن اسم القاعدة في أيّ من القوائم الأربع
+    final allRules = [
+      ...refTajweedRules,
+      ...insertedTajweedRules,
+      ...replacedTajweedRules,
+      ...missingTajweedRules,
+    ];
+    if (allRules.isNotEmpty) {
+      final ruleName = allRules.first.nameAr;
       if (speechErrorType == 'replace') {
         final exp = expectedLen ?? 0;
         final got = predictedLen ?? 0;

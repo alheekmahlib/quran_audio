@@ -434,12 +434,13 @@ class OnnxRecitationEngine implements RecitationEngine {
 
   /// يبني أخطاء تجويد غنية من الصفات المُكتشَفة.
   ///
-  /// يُنتج RecitationError واحد لِكلّ صفة "إيجابية" مُكتشَفة
-  /// (مثل قلقلة، تفخيم، غنّة...) بِـ TajweedRule.
+  /// **يُجمّع** الصفات حسب النوع (قلقلة، تفخيم...) بدل إنشاء خطأ لِكلّ
+  /// تكرار. هكذا نُنتج خطأً واحداً مُفيداً لِكلّ صفة مُكتشَفة، مع عدّد
+  /// المرّات الّتي ظهرت فيها ومواضعها التقريبية.
   List<RecitationError> _buildSifatErrorsRich(
     final List<Map<String, String>> sifatPerPhoneme,
   ) {
-    // خريطة رأس الصفة → {اسم عربي، اسم إنجليزي}
+    // خريطة رأس الصفة → {اسم عربي للفئة، اسم إنجليزي}
     const sifatMeta = {
       'hams_or_jahr': ('الهمس والجهر', 'hams_or_jahr'),
       'shidda_or_rakhawa': ('الشدّة والرخاوة', 'shidda_or_rakhawa'),
@@ -447,37 +448,60 @@ class OnnxRecitationEngine implements RecitationEngine {
       'itbaq': ('الإطباق', 'itbaq'),
       'safeer': ('الصفير', 'safeer'),
       'qalqla': ('القلقلة', 'qalqla'),
-      'tikraar': ('التكرار', 'tikraar'),
+      'tikraar': ('التكرار (الراء)', 'tikraar'),
       'tafashie': ('التفشّي', 'tafashie'),
-      'istitala': ('الاستطالة', 'istitala'),
+      'istitala': ('الاستطالة (الضاد)', 'istitala'),
       'ghonna': ('الغُنّة', 'ghonna'),
     };
 
-    final errors = <RecitationError>[];
+    // اجمع الصفات الإيجابية المُكتشَفة (تخطّي السلبيات مثل "[لا قلقلة]")
+    // key = (headName, token)، value = قائمة المواضع
+    final detected = <String, List<int>>{};
     for (var i = 0; i < sifatPerPhoneme.length; i++) {
       final sifat = sifatPerPhoneme[i];
       for (final entry in sifat.entries) {
-        final headName = entry.key;
         final token = entry.value; // مثل "[مقلقل]"
-        final meta = sifatMeta[headName];
-        if (meta == null) continue;
-
-        // تخطّي الصفات "السلبية" (لا صفير، لا قلقلة...) — ليست أخطاء
+        // تخطّي الصفات "السلبية"
         if (token.contains('لا ')) continue;
-
-        final rule = TajweedRule(
-          nameAr: token,
-          nameEn: meta.$2,
-          correctnessType: 'sifa',
-        );
-        errors.add(RecitationError(
-          errorType: 'tajweed',
-          speechErrorType: 'replace',
-          phPos: [i, i + 1],
-          insertedTajweedRules: [rule],
-        ));
+        final key = '${entry.key}|$token';
+        detected.putIfAbsent(key, () => []).add(i);
       }
     }
+
+    // ابنِ خطأً واحداً مُجمَّعاً لِكلّ صفة مُكتشَفة
+    final errors = <RecitationError>[];
+    for (final entry in detected.entries) {
+      final parts = entry.key.split('|');
+      final headName = parts[0];
+      final token = parts[1]; // "[مقلقل]"
+      final positions = entry.value;
+      final meta = sifatMeta[headName];
+      if (meta == null) continue;
+
+      final rule = TajweedRule(
+        nameAr: '$token (${positions.length}×) — ${meta.$1}',
+        nameEn: meta.$2,
+        correctnessType: 'sifa',
+      );
+      errors.add(RecitationError(
+        errorType: 'tajweed',
+        speechErrorType: 'replace',
+        phPos: [positions.first, positions.last + 1],
+        insertedTajweedRules: [rule],
+      ));
+    }
+
+    // رتّب: الصفات الأكثر تكراراً أوّلاً
+    errors.sort((a, b) {
+      final aN = int.tryParse(
+              RegExp(r'\((\d+)×').firstMatch(a.insertedTajweedRules.first.nameAr)?.group(1) ?? '0') ??
+          0;
+      final bN = int.tryParse(
+              RegExp(r'\((\d+)×').firstMatch(b.insertedTajweedRules.first.nameAr)?.group(1) ?? '0') ??
+          0;
+      return bN.compareTo(aN);
+    });
+
     return errors;
   }
 }
