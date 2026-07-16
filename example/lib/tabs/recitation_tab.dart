@@ -15,9 +15,9 @@ import 'package:quran_audio/quran_audio.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
-/// رابط تنزيل النموذج من GitHub Release.
+/// رابط تنزيل النموذج من GitHub Release (مستودع quran_audio العام).
 const _kModelUrl =
-    'https://github.com/alheekmahlib/quran-muaalem-local/releases/download/student-v2/muaalem_student.int8.onnx';
+    'https://github.com/alheekmahlib/quran_audio/releases/download/tajweed-model-v1/muaalem_student.int8.onnx';
 
 /// حجم النموذج التقريبي (لِعرضه قبل التحميل).
 const _kModelSizeMb = 95.3;
