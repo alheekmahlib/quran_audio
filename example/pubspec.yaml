@@ -12,6 +12,9 @@ dependencies:
     path: ../
   get: ^4.6.6
   get_storage: ^2.1.1
+  # تنزيل نموذج التجويد offline / download offline tajweed model
+  dio: ^5.10.0
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:

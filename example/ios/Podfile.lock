@@ -8,6 +8,14 @@ PODS:
   - just_audio (0.0.1):
     - Flutter
     - FlutterMacOS
+  - onnxruntime (0.0.1):
+    - Flutter
+    - onnxruntime-objc (= 1.15.1)
+  - onnxruntime-c (1.15.1)
+  - onnxruntime-objc (1.15.1):
+    - onnxruntime-objc/Core (= 1.15.1)
+  - onnxruntime-objc/Core (1.15.1):
+    - onnxruntime-c (= 1.15.1)
   - record_ios (1.2.1):
     - Flutter
   - sqflite_darwin (0.0.4):
@@ -19,8 +27,14 @@ DEPENDENCIES:
   - audio_session (from `.symlinks/plugins/audio_session/ios`)
   - Flutter (from `Flutter`)
   - just_audio (from `.symlinks/plugins/just_audio/darwin`)
+  - onnxruntime (from `.symlinks/plugins/onnxruntime/ios`)
   - record_ios (from `.symlinks/plugins/record_ios/ios`)
   - sqflite_darwin (from `.symlinks/plugins/sqflite_darwin/darwin`)
+
+SPEC REPOS:
+  trunk:
+    - onnxruntime-c
+    - onnxruntime-objc
 
 EXTERNAL SOURCES:
   audio_service:
@@ -31,6 +45,8 @@ EXTERNAL SOURCES:
     :path: Flutter
   just_audio:
     :path: ".symlinks/plugins/just_audio/darwin"
+  onnxruntime:
+    :path: ".symlinks/plugins/onnxruntime/ios"
   record_ios:
     :path: ".symlinks/plugins/record_ios/ios"
   sqflite_darwin:
@@ -41,6 +57,9 @@ SPEC CHECKSUMS:
   audio_session: 9bb7f6c970f21241b19f5a3658097ae459681ba0
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   just_audio: 4e391f57b79cad2b0674030a00453ca5ce817eed
+  onnxruntime: 2ab1957eb029c71d47f7bb35cc4efc9f0d297828
+  onnxruntime-c: ebdcfd8650bcbd10121c125262f99dea681b92a3
+  onnxruntime-objc: ae7acec7a3d03eaf072d340afed7a35635c1c2a6
   record_ios: 980fd386a97a35987d0fce3dfda4b26a38c90f4c
   sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0
 
