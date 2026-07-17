@@ -30,6 +30,10 @@ const _kVocabUrl =
 const _kTokensUrl =
     'https://github.com/alheekmahlib/quran_audio/releases/download/tajweed-model-v1/tokens.txt';
 
+/// رابط تنزيل DB الفونيمات المرجعية (1.4MB، لِـ المقارنة الكاملة).
+const _kQuranDbUrl =
+    'https://github.com/alheekmahlib/quran_audio/releases/download/tajweed-model-v1/quran_reference.json.gz';
+
 /// حجم النموذج التقريبي (لِعرضه قبل التحميل).
 const _kModelSizeMb = 96.0;
 
@@ -68,6 +72,7 @@ class _RecitationTabState extends State<RecitationTab> {
   final _modelDownloaded = false.obs;
   String? _modelPath;
   String? _vocabPath;
+  String? _quranDbPath;
   String? _downloadError;
 
   @override
@@ -102,16 +107,23 @@ class _RecitationTabState extends State<RecitationTab> {
   Future<String> get _localVocabPath async =>
       '${await _localDir}/vocab_official.json';
 
-  /// تحقّق إن كان النموذج + vocab محمّلَين مُسبقاً.
+  /// مسار DB الفونيمات المرجعية.
+  Future<String> get _localQuranDbPath async =>
+      '${await _localDir}/quran_reference.json.gz';
+
+  /// تحقّق إن كان النموذج + vocab + DB محمّلَين مُسبقاً.
   Future<void> _checkModelExists() async {
     final modelFile = File(await _localModelPath);
     final vocabFile = File(await _localVocabPath);
+    final dbFile = File(await _localQuranDbPath);
     final modelOk =
         await modelFile.exists() && await modelFile.length() > 80 * 1024 * 1024;
     final vocabOk = await vocabFile.exists();
-    if (modelOk && vocabOk) {
+    final dbOk = await dbFile.exists();
+    if (modelOk && vocabOk && dbOk) {
       _modelPath = await _localModelPath;
       _vocabPath = await _localVocabPath;
+      _quranDbPath = await _localQuranDbPath;
       _modelDownloaded.value = true;
     }
   }
@@ -127,28 +139,34 @@ class _RecitationTabState extends State<RecitationTab> {
       final dio = Dio();
       final modelPath = await _localModelPath;
       final vocabPath = await _localVocabPath;
+      final quranDbPath = await _localQuranDbPath;
 
-      // 1) النموذج (95MB) — يُمثّل ~95% من التقدّم
+      // 1) النموذج (96MB) — يُمثّل ~90% من التقدّم
       dev.log('downloadModel: fetching ONNX model…', name: 'RecitationTab');
       await dio.download(
         _kModelUrl,
         modelPath,
         onReceiveProgress: (received, total) {
           if (total > 0) {
-            // النموذج = 0%→95% من الإجمالي
-            _downloadProgress.value = (received / total) * 0.95;
+            _downloadProgress.value = (received / total) * 0.90;
           }
         },
       );
       _modelPath = modelPath;
 
-      // 2) vocab (2KB) — سريع، 95%→100%
+      // 2) vocab (2KB)
       dev.log('downloadModel: fetching vocab…', name: 'RecitationTab');
-      _downloadProgress.value = 0.97;
+      _downloadProgress.value = 0.92;
       await dio.download(_kVocabUrl, vocabPath);
       _vocabPath = vocabPath;
 
-      // 3) tokens (اختياري — لِـ sherpa-onnx مستقبلاً)
+      // 3) DB الفونيمات المرجعية (1.4MB) — لِـ المقارنة الكاملة
+      dev.log('downloadModel: fetching quran reference DB…', name: 'RecitationTab');
+      _downloadProgress.value = 0.95;
+      await dio.download(_kQuranDbUrl, quranDbPath);
+      _quranDbPath = quranDbPath;
+
+      // 4) tokens (اختياري — لِـ sherpa-onnx مستقبلاً)
       dev.log('downloadModel: fetching tokens…', name: 'RecitationTab');
       _downloadProgress.value = 0.99;
       try {
@@ -183,10 +201,12 @@ class _RecitationTabState extends State<RecitationTab> {
 
   /// يُفعّل الوضع Offline ثمّ يُعاين الآية الافتراضية.
   Future<void> _activateOffline() async {
-    // تأكّد من وجود المسار — إن لم يكن، ابحث عنه
+    // تأكّد من وجود المسارات — إن لم تكن، ابحث عنها
     _modelPath ??= await _localModelPath;
     _vocabPath ??= await _localVocabPath;
-    dev.log('activateOffline: modelPath=$_modelPath vocabPath=$_vocabPath',
+    _quranDbPath ??= await _localQuranDbPath;
+    dev.log('activateOffline: modelPath=$_modelPath vocabPath=$_vocabPath '
+        'quranDbPath=$_quranDbPath',
         name: 'RecitationTab');
     try {
       // تحقّق من وجود الملفّ قبل التفعيل
@@ -208,6 +228,7 @@ class _RecitationTabState extends State<RecitationTab> {
       await Recitation.initOffline(
         modelPath: _modelPath,
         vocabPath: _vocabPath,
+        quranDbPath: _quranDbPath,
       );
       _mode.value = 'offline';
       _isReady.value = Recitation.isInitialized;

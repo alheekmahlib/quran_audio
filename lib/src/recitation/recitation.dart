@@ -95,16 +95,19 @@ class Recitation {
   ///
   /// [modelPath] - مسار النموذج (إن null، يُحمَّل من assets).
   /// [vocabPath] - مسار vocab (إن null، من assets).
+  /// [quranDbPath] - مسار DB الفونيمات المرجعية (إن null، من assets).
   ///
   /// يعمل على الأجهزة المحمولة وسطح المكتب (لا يدعم الويب).
   static Future<void> initOffline({
     String? modelPath,
     String? vocabPath,
+    String? quranDbPath,
   }) async {
     _engine?.dispose();
     final onnxEngine = OnnxRecitationEngine(
       modelAssetPath: modelPath,
       vocabAssetPath: vocabPath,
+      quranDbPath: quranDbPath,
     );
     await onnxEngine.initialize();
     _engine = onnxEngine;

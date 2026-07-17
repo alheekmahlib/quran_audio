@@ -50,11 +50,18 @@ class _FrameSpan {
 ///
 /// يُحمّل النموذج من assets أو من مسار مُخصّص (بعد تنزيله من HuggingFace).
 class OnnxRecitationEngine implements RecitationEngine {
-  OnnxRecitationEngine({this.modelAssetPath, this.vocabAssetPath});
+  OnnxRecitationEngine({
+    this.modelAssetPath,
+    this.vocabAssetPath,
+    this.quranDbPath,
+  });
 
-  /// مسار النموذج في assets (إن كان bundled) أو null لِـ مسار خارجي.
+  /// مسار النموذج (إن كان bundled) أو null لِـ مسار خارجي.
   final String? modelAssetPath;
   final String? vocabAssetPath;
+
+  /// مسار قاعدة بيانات الفونيمات المرجعية (JSON.gz) أو null لِـ asset.
+  final String? quranDbPath;
 
   OrtSession? _session;
   Map<String, dynamic> _vocab = {};
@@ -96,7 +103,7 @@ class OnnxRecitationEngine implements RecitationEngine {
 
     // 2ب) حمّل قاعدة بيانات الفونيمات المرجعية (1.4MB)
     try {
-      await _quranDb.load();
+      await _quranDb.load(filePath: quranDbPath);
       log('OnnxRecitationEngine: quran DB loaded (${_quranDb.verseCount} verses)',
           name: 'OnnxEngine');
     } catch (e) {
