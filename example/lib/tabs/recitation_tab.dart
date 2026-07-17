@@ -49,6 +49,11 @@ class _RecitationTabState extends State<RecitationTab> {
     text: 'بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ',
   );
 
+  // ─ـ اختيار sura:aya (offline، الطبقة الكاملة) ──
+  final _suraCtrl = TextEditingController(text: '1');
+  final _ayaCtrl = TextEditingController(text: '1');
+  final RxString _previewVerse = ''.obs; // النصّ العثماني المُعاينة
+
   // ─ـ مشترك ──
   final _isReady = false.obs;
   final _isRecording = false.obs;
@@ -75,6 +80,8 @@ class _RecitationTabState extends State<RecitationTab> {
   void dispose() {
     _urlCtrl.dispose();
     _refTextCtrl.dispose();
+    _suraCtrl.dispose();
+    _ayaCtrl.dispose();
     _session?.dispose();
     super.dispose();
   }
@@ -174,7 +181,7 @@ class _RecitationTabState extends State<RecitationTab> {
     }
   }
 
-  /// يُفعّل الوضع Offline.
+  /// يُفعّل الوضع Offline ثمّ يُعاين الآية الافتراضية.
   Future<void> _activateOffline() async {
     // تأكّد من وجود المسار — إن لم يكن، ابحث عنه
     _modelPath ??= await _localModelPath;
@@ -204,6 +211,8 @@ class _RecitationTabState extends State<RecitationTab> {
       );
       _mode.value = 'offline';
       _isReady.value = Recitation.isInitialized;
+      // عاين الآية الافتراضية (1:1) بعد التهيئة
+      _updatePreview();
       dev.log('activateOffline: success, initialized=${Recitation.isInitialized}',
           name: 'RecitationTab');
       Get.snackbar(
@@ -244,6 +253,18 @@ class _RecitationTabState extends State<RecitationTab> {
 
   // ═══════════════════════ Session ═══════════════════════
 
+  /// يُعاين النصّ العثماني لِـ sura:aya المُختارة (من DB المرجعية).
+  void _updatePreview() {
+    final sura = int.tryParse(_suraCtrl.text.trim());
+    final aya = int.tryParse(_ayaCtrl.text.trim());
+    if (sura == null || aya == null) {
+      _previewVerse.value = '';
+      return;
+    }
+    final text = Recitation.getVerseText(suraIdx: sura, ayaIdx: aya);
+    _previewVerse.value = text ?? 'الآية $sura:$aya غير موجودة في DB';
+  }
+
   Future<void> _startSession() async {
     if (!Recitation.isInitialized) {
       Get.snackbar('خطأ', 'فعّل الوضع offline أو online أولاً',
@@ -252,11 +273,13 @@ class _RecitationTabState extends State<RecitationTab> {
     }
     _result.value = null;
     _isRecording.value = true;
-    // في الوضع offline، مُرّر النصّ المرجعي لِتمكين أخطاء التجويد.
+    // في الوضع offline، مُرّر suraIdx/ayaIdx لِـ المقارنة الكاملة من DB.
     // في الوضع online، يُتجاهل (الخادم يبحث في القرآن كاملاً).
-    final ref = _refTextCtrl.text.trim();
+    final sura = int.tryParse(_suraCtrl.text.trim());
+    final aya = int.tryParse(_ayaCtrl.text.trim());
     _session = Recitation.createSession(
-      referenceText: ref.isEmpty ? null : ref,
+      suraIdx: sura,
+      ayaIdx: aya,
     );
     _session!.state.listen((s) {
       _isRecording.value = s == RecitationState.recording;
@@ -603,7 +626,7 @@ class _RecitationTabState extends State<RecitationTab> {
   Widget _recitationControls({required bool isOffline}) {
     return Column(
       children: [
-        // حقل النصّ المرجعي (offline فقط — لِتمكين مقارنة التجويد)
+        // اختيار sura:aya (offline فقط — لِتمكين المقارنة الكاملة)
         if (isOffline)
           SectionCard(
             titleAr: 'الآية المُتوقَّعة',
@@ -612,22 +635,71 @@ class _RecitationTabState extends State<RecitationTab> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'اكتب الآية التي ستتلوها (offline) لِمقارنة الفونيمات '
-                  'وكشف صفات التجويد.',
-                  style:
-                      TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.5),
+                  'اختر السورة والآية الّتي ستتلوها (offline) لِمقارنة '
+                  'الفونيمات وكشف أخطاء التجويد بِشكل كامل.',
+                  style: TextStyle(
+                      color: AppColors.textMuted, fontSize: 11, height: 1.5),
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _refTextCtrl,
-                  maxLines: 2,
-                  textDirection: TextDirection.rtl,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(
-                    hintText: 'بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ',
-                    prefixIcon: Icon(Icons.menu_book_rounded, size: 20),
-                  ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _suraCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'السورة',
+                          prefixIcon: Icon(Icons.menu_book_rounded, size: 20),
+                        ),
+                        onChanged: (_) => _updatePreview(),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _ayaCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'الآية',
+                          prefixIcon:
+                              Icon(Icons.format_list_numbered_rounded, size: 20),
+                        ),
+                        onChanged: (_) => _updatePreview(),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _updatePreview,
+                      icon: const Icon(Icons.search_rounded, size: 18),
+                      label: const Text('عرض'),
+                    ),
+                  ],
                 ),
+                const SizedBox(height: 10),
+                // معاينة النصّ العثماني
+                Obx(() {
+                  final v = _previewVerse.value;
+                  if (v.isEmpty) {
+                    return const Text(
+                      'اكتب رقم السورة والآية واضغط "عرض"',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                    );
+                  }
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceLight,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      v,
+                      style: const TextStyle(fontSize: 18, height: 1.8),
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                    ),
+                  );
+                }),
               ],
             ),
           ),
@@ -921,11 +993,33 @@ class _ErrorCard extends StatelessWidget {
                       isTajweed ? AppColors.accent : AppColors.destructive,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  error.description,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w600, fontSize: 13),
+                Expanded(
+                  child: Text(
+                    error.description,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
                 ),
+                if (error.wordText != null &&
+                    error.wordText!.isNotEmpty) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      error.wordText!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.accent,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textDirection: TextDirection.rtl,
+                    ),
+                  ),
+                ],
               ],
             ),
             if (error.expectedPh != null || error.predictedPh != null) ...[

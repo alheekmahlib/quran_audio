@@ -26,6 +26,9 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:quran_audio/src/recitation/models/muaalem_config.dart';
 import 'package:quran_audio/src/recitation/models/recitation_result.dart';
+import 'package:quran_audio/src/recitation/phoneme_aligner.dart';
+import 'package:quran_audio/src/recitation/error_detector.dart';
+import 'package:quran_audio/src/recitation/quran_phoneme_db.dart';
 import 'package:quran_audio/src/recitation/recitation_engine.dart';
 import 'package:quran_audio/src/recitation/wav_decoder.dart';
 
@@ -59,10 +62,18 @@ class OnnxRecitationEngine implements RecitationEngine {
   bool _initialized = false;
   String? _modelPath;
   List<String> _outputNames = [];
+  final QuranPhonemeDb _quranDb = QuranPhonemeDb();
 
   /// هل المحرّك جاهز.
   @override
   Future<bool> isHealthy() async => _initialized && _session != null;
+
+  /// (offline) نصّ آية عثماني من DB.
+  @override
+  String? getVerseText({required int suraIdx, required int ayaIdx}) {
+    if (!_quranDb.isLoaded) return null;
+    return _quranDb.getReference(suraIdx: suraIdx, ayaIdx: ayaIdx)?.uthmani;
+  }
 
   // ── التهيئة ───────────────────────────────────────────────────
 
@@ -82,6 +93,17 @@ class OnnxRecitationEngine implements RecitationEngine {
     await _loadVocab();
     log('OnnxRecitationEngine: vocab loaded (${_phonemeIdToToken.length} tokens)',
         name: 'OnnxEngine');
+
+    // 2ب) حمّل قاعدة بيانات الفونيمات المرجعية (1.4MB)
+    try {
+      await _quranDb.load();
+      log('OnnxRecitationEngine: quran DB loaded (${_quranDb.verseCount} verses)',
+          name: 'OnnxEngine');
+    } catch (e) {
+      log('OnnxRecitationEngine: quran DB load failed (offline compare disabled): $e',
+          name: 'OnnxEngine', level: 900);
+      // لا نفشل — الـDB اختياري (نُنتج فونيمات فقط)
+    }
 
     // 3) أنشئ جلسة ONNX Runtime
     try {
@@ -209,6 +231,8 @@ class OnnxRecitationEngine implements RecitationEngine {
     required final Uint8List wavBytes,
     final MuaalemConfig config = const MuaalemConfig(),
     final double errorRatio = 0.1,
+    final int? suraIdx,
+    final int? ayaIdx,
     final String? referenceText,
   }) async {
     if (!_initialized) await initialize();
@@ -237,24 +261,83 @@ class OnnxRecitationEngine implements RecitationEngine {
     // 4) فكّ ترميز رؤوس الصفات عند مواضع الفونيمات المتوقَّعة
     final sifatPerPhoneme = _decodeSifatAtPhonemes(outputs, decodeResult);
 
-    // 5) ابنِ أخطاء التجويد من الصفات (تفصيل غني)
-    final errors = _buildSifatErrorsRich(sifatPerPhoneme);
+    // 5) المسار الكامل: إن أُعطي suraIdx/ayaIdx وَالـDB محمّلة،
+    //    استخدم الطبقات الثلاث (DB + محاذاة + كشّاف أخطاء).
+    if (suraIdx != null && ayaIdx != null && _quranDb.isLoaded) {
+      final ref = _quranDb.getReference(suraIdx: suraIdx, ayaIdx: ayaIdx);
+      if (ref != null) {
+        // الطبقة 2: محاذاة Levenshtein
+        final ops = alignPhonemes(ref.phonemeIds, phonemeIds);
+        final stats = computeStats(ops);
+        log('OnnxRecitationEngine: aligned ${ref.verseKey} — '
+            'pred=${phonemeIds.length} ref=${ref.phonemeIds.length} $stats',
+            name: 'OnnxEngine');
 
-    // 6) إن أُعطي نصّ مرجعي، اعرضه كَـ uthmaniText مع الفونيمات
+        // الطبقة 3: كشّاف الأخطاء
+        final errors = buildErrorsFromAlignment(
+          ops: ops,
+          sifatPerPhoneme: _sifatMapsToInts(sifatPerPhoneme),
+          referenceVerse: ref,
+          phonemeIdToToken: _phonemeIdToToken,
+        );
+
+        return RecitationResult(
+          uthmaniText: ref.uthmani,
+          predictedPhonemes: predictedPhonemes,
+          referencePhonemes: ref.phonemes,
+          errors: errors,
+        );
+      }
+      // الآية غير موجودة في DB (مثل الحروف المقطّعة) — استمر لِـ referenceText
+      log('OnnxRecitationEngine: verse $suraIdx:$ayaIdx not in DB',
+          name: 'OnnxEngine', level: 900);
+    }
+
+    // 6) المسار البسيط: صفات مُجمّعة فقط (بدون DB)
+    final sifatErrors = _buildSifatErrorsRich(sifatPerPhoneme);
+
     if (referenceText != null && referenceText.isNotEmpty) {
       return RecitationResult(
         uthmaniText: referenceText,
         predictedPhonemes: predictedPhonemes,
         referencePhonemes: referenceText,
-        errors: errors,
+        errors: sifatErrors,
       );
     }
 
-    // بدون نصّ مرجعي: الفونيمات + صفات الحروف فقط
     return RecitationResult(
       predictedPhonemes: predictedPhonemes,
-      errors: errors,
+      errors: sifatErrors,
     );
+  }
+
+  /// يحوّل sifatPerPhoneme (Map<String,String>) → List<List<int>> (IDs)
+  /// لِـ التمرير لِـ buildErrorsFromAlignment.
+  List<List<int>> _sifatMapsToInts(List<Map<String, String>> sifatMaps) {
+    return sifatMaps.map((m) {
+      // نُحوّل token عربي → id لِكلّ رأس
+      final row = <int>[];
+      for (final head in _sifatHeadNames) {
+        final token = m[head];
+        if (token == null) {
+          row.add(0); // PAD
+        } else {
+          // ابحث عن id المطابق في _sifatIdToToken (معكوس)
+          final idMap = _sifatIdToToken[head];
+          int id = 0;
+          if (idMap != null) {
+            for (final e in idMap.entries) {
+              if (e.value == token) {
+                id = e.key;
+                break;
+              }
+            }
+          }
+          row.add(id);
+        }
+      }
+      return row;
+    }).toList(growable: false);
   }
 
   @override
@@ -434,74 +517,89 @@ class OnnxRecitationEngine implements RecitationEngine {
 
   /// يبني أخطاء تجويد غنية من الصفات المُكتشَفة.
   ///
-  /// **يُجمّع** الصفات حسب النوع (قلقلة، تفخيم...) بدل إنشاء خطأ لِكلّ
-  /// تكرار. هكذا نُنتج خطأً واحداً مُفيداً لِكلّ صفة مُكتشَفة، مع عدّد
-  /// المرّات الّتي ظهرت فيها ومواضعها التقريبية.
+  /// **يُنتج خطأً مستقلاً لِكلّ موضع** (مثل الخادم تماماً) بدل تجميع كلّ
+  /// الصفات في خطأ واحد. كلّ خطأ يحوي اسم القاعدة النظيف + القيم المتوقَّعة
+  /// والفعليّة لِتُعرض كَـ شارات خضراء/حمراء في الـ UI.
+  ///
+  /// Produces a separate error per position (exactly like the server) instead
+  /// of aggregating all attributes into one error. Each error carries the clean
+  /// rule name + expected/actual values to render as green/red chips.
   List<RecitationError> _buildSifatErrorsRich(
-    final List<Map<String, String>> sifatPerPhoneme,
-  ) {
-    // خريطة رأس الصفة → {اسم عربي للفئة، اسم إنجليزي}
-    const sifatMeta = {
-      'hams_or_jahr': ('الهمس والجهر', 'hams_or_jahr'),
-      'shidda_or_rakhawa': ('الشدّة والرخاوة', 'shidda_or_rakhawa'),
-      'tafkheem_or_taqeeq': ('التفخيم والترقيق', 'tafkheem_or_taqeeq'),
-      'itbaq': ('الإطباق', 'itbaq'),
-      'safeer': ('الصفير', 'safeer'),
-      'qalqla': ('القلقلة', 'qalqla'),
-      'tikraar': ('التكرار (الراء)', 'tikraar'),
-      'tafashie': ('التفشّي', 'tafashie'),
-      'istitala': ('الاستطالة (الضاد)', 'istitala'),
-      'ghonna': ('الغُنّة', 'ghonna'),
+    final List<Map<String, String>> sifatPerPhoneme, {
+    final String? referenceText,
+    final int totalPhonemes = 0,
+  }) {
+    // قاموس رأس الصفة → (اسم عربي نظيف، اسم إنجليزي، القيمة المتوقَّعة).
+    // القيمة المتوقَّعة هنا تمثّل "السليم" الافتراضي لِكلّ صفة — تُستخدم
+    // كَـ expectedPh في الـ UI.
+    // Head → (clean Arabic name, English key, expected value).
+    const sifatMeta = <String, (String, String, String)>{
+      'hams_or_jahr': ('الهمس والجهر', 'hams_or_jahr', '[سليم]'),
+      'shidda_or_rakhawa': ('الشدّة والرخاوة', 'shidda_or_rakhawa', '[سليم]'),
+      'tafkheem_or_taqeeq': ('التفخيم والترقيق', 'tafkheem_or_taqeeq', '[سليم]'),
+      'itbaq': ('الإطباق', 'itbaq', '[سليم]'),
+      'safeer': ('الصفير', 'safeer', '[سليم]'),
+      'qalqla': ('القلقلة', 'qalqla', '[سليم]'),
+      'tikraar': ('التكرار (الراء)', 'tikraar', '[سليم]'),
+      'tafashie': ('التفشّي', 'tafashie', '[سليم]'),
+      'istitala': ('الاستطالة (الضاد)', 'istitala', '[سليم]'),
+      'ghonna': ('الغُنّة', 'ghonna', '[سليم]'),
     };
 
-    // اجمع الصفات الإيجابية المُكتشَفة (تخطّي السلبيات مثل "[لا قلقلة]")
-    // key = (headName, token)، value = قائمة المواضع
-    final detected = <String, List<int>>{};
-    for (var i = 0; i < sifatPerPhoneme.length; i++) {
-      final sifat = sifatPerPhoneme[i];
+    // قسّم النصّ المرجعي لِكلمات (لِتقدير الكلمة المتأثّرة بِكلّ فونيم).
+    // Split the reference text into words (to estimate the affected word).
+    final refWords = (referenceText == null || referenceText.isEmpty)
+        ? const <String>[]
+        : referenceText.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+
+    final errors = <RecitationError>[];
+    for (var p = 0; p < sifatPerPhoneme.length; p++) {
+      final sifat = sifatPerPhoneme[p];
       for (final entry in sifat.entries) {
-        final token = entry.value; // مثل "[مقلقل]"
-        // تخطّي الصفات "السلبية"
+        final headName = entry.key;
+        final token = entry.value; // مثل "[مقلقل]" أو "[لا قلقلة]"
+        // تخطّي الصفات "السلبية" (السليمة) مثل "[لا قلقلة]".
+        // Skip "negative" (correct) attributes like "[no qalqla]".
         if (token.contains('لا ')) continue;
-        final key = '${entry.key}|$token';
-        detected.putIfAbsent(key, () => []).add(i);
+        final meta = sifatMeta[headName];
+        if (meta == null) continue;
+
+        // قدّر الكلمة المتأثّرة نسبيّاً: موضع الفونيم / إجمالي الفونيمات ×
+        // عدد الكلمات المرجعية. تقدير تقريبي لكنّه مفيد لِلعرض.
+        // Estimate the affected word relatively: phoneme position / total
+        // phonemes × reference word count. Approximate but useful for display.
+        String? wordText;
+        if (refWords.isNotEmpty && totalPhonemes > 0) {
+          final wordIdx = (p / totalPhonemes * refWords.length).floor();
+          wordText = refWords[wordIdx.clamp(0, refWords.length - 1)];
+        }
+
+        // خطأ مستقل لِكلّ موضع — يطابق هيكل الخادم.
+        // Separate error per position — matches the server's structure.
+        errors.add(RecitationError(
+          errorType: 'tajweed',
+          speechErrorType: 'sifa', // نوع خاص: لا يُفعّل فرع الأطوال في description.
+          uthmaniPos: [p, p + 1], // موضع تقريبي في الفونيمات.
+          phPos: [p, p + 1],
+          expectedPh: meta.$3, // القيمة المتوقَّعة (السليمة).
+          predictedPh: token, // ما اكتُشف فعلاً.
+          wordText: wordText, // الكلمة المتأثّرة (تقدير نسبي).
+          refTajweedRules: [
+            TajweedRule(
+              nameAr: meta.$1, // اسم نظيف: 'القلقلة'.
+              nameEn: meta.$2,
+              correctnessType: 'sifa',
+            ),
+          ],
+        ));
       }
     }
 
-    // ابنِ خطأً واحداً مُجمَّعاً لِكلّ صفة مُكتشَفة
-    final errors = <RecitationError>[];
-    for (final entry in detected.entries) {
-      final parts = entry.key.split('|');
-      final headName = parts[0];
-      final token = parts[1]; // "[مقلقل]"
-      final positions = entry.value;
-      final meta = sifatMeta[headName];
-      if (meta == null) continue;
-
-      final rule = TajweedRule(
-        nameAr: '$token (${positions.length}×) — ${meta.$1}',
-        nameEn: meta.$2,
-        correctnessType: 'sifa',
-      );
-      errors.add(RecitationError(
-        errorType: 'tajweed',
-        speechErrorType: 'replace',
-        phPos: [positions.first, positions.last + 1],
-        insertedTajweedRules: [rule],
-      ));
-    }
-
-    // رتّب: الصفات الأكثر تكراراً أوّلاً
-    errors.sort((a, b) {
-      final aN = int.tryParse(
-              RegExp(r'\((\d+)×').firstMatch(a.insertedTajweedRules.first.nameAr)?.group(1) ?? '0') ??
-          0;
-      final bN = int.tryParse(
-              RegExp(r'\((\d+)×').firstMatch(b.insertedTajweedRules.first.nameAr)?.group(1) ?? '0') ??
-          0;
-      return bN.compareTo(aN);
-    });
+    // رتّب حسب الموضع (أوّل الآية أولاً) لِعرض منطقي.
+    // Sort by position (start of the ayah first) for logical display.
+    errors.sort((a, b) => a.phPos[0].compareTo(b.phPos[0]));
 
     return errors;
   }
 }
+

@@ -46,10 +46,11 @@ flutter:
   assets:
     - assets/jsons/
     - assets/images/
-    # نموذج التجويد offline (ONNX int8، 95MB) — يُحمَّل من GitHub Release
-    # لاحقاً، لكن tokens + vocab خفيفة ومُضمَّنة هنا لِلاستخدام الفوري.
+    # نموذج التجويد offline (ONNX QDQ، 96MB) — يُحمَّل من GitHub Release.
+    # tokens + vocab + DB المرجعية خفيفة ومُضمَّنة هنا.
     - assets/models/tokens.txt
     - assets/models/vocab_official.json
+    - assets/models/quran_reference.json.gz
 
 # إعلان المنصات المدعومة رسمياً على pub.dev / Declares supported platforms
 platforms:

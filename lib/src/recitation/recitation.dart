@@ -132,6 +132,13 @@ class Recitation {
     return _engine!.isHealthy();
   }
 
+  /// (offline) نصّ آية عثماني من DB المرجعية.
+  /// يُعيد null في الوضع online أو إن لم تُوجد الآية في DB.
+  static String? getVerseText({required int suraIdx, required int ayaIdx}) {
+    if (_engine == null) return null;
+    return _engine!.getVerseText(suraIdx: suraIdx, ayaIdx: ayaIdx);
+  }
+
   /// تحقّق من صحة الخادم (متوافق مع الإصدارات السابقة — للـ online).
   ///
   /// Check server health (backward-compatible alias for [isEngineHealthy]).
@@ -143,16 +150,21 @@ class Recitation {
   ///
   /// تتطلّب تهيئة مسبقة عبر [init] أو [initOffline].
   ///
-  /// [referenceText] (اختياري، offline فقط) نصّ الآية العثماني المُتوقَّع.
-  ///   يُمكّن المحرّك offline من مقارنة الفونيمات وإنتاج أخطاء تجويد.
+  /// [suraIdx]/[ayaIdx] (offline) رقم السورة والآية — يُمكّن المحرّك
+  ///   offline من جلب المرجع من DB ومقارنة الفونيمات + كشف أخطاء التجويد.
+  /// [referenceText] (offline، بديل) نصّ الآية العثماني.
   static RecitationSession createSession({
     MuaalemConfig config = const MuaalemConfig(),
+    int? suraIdx,
+    int? ayaIdx,
     String? referenceText,
   }) {
     _ensureInitialized();
     return RecitationSession(
       config: config,
       engine: _engine!,
+      suraIdx: suraIdx,
+      ayaIdx: ayaIdx,
       referenceText: referenceText,
     );
   }

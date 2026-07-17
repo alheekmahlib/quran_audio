@@ -7,6 +7,16 @@ import 'models/muaalem_config.dart';
 import 'models/recitation_result.dart';
 import 'recitation_engine.dart';
 
+/// خطأ من خادم quran-muaalem (مثل HTTP 500).
+///
+/// An error from the quran-muaalem server (e.g. HTTP 500).
+class RecitationServerException implements Exception {
+  const RecitationServerException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 /// عميل HTTP لِخادم quran-muaalem.
 ///
 /// HTTP client for the quran-muaalem server.
@@ -56,7 +66,9 @@ class MuaalemClient implements RecitationEngine {
     required Uint8List wavBytes,
     MuaalemConfig config = const MuaalemConfig(),
     double errorRatio = 0.1,
-    String? referenceText, // @unusedVar — الخادم يبحث في القرآن كاملاً
+    int? suraIdx, // @unused — الخادم يبحث في القرآن كاملاً
+    int? ayaIdx, // @unused
+    String? referenceText, // @unused
   }) async {
     final form = FormData();
     form.files.add(MapEntry(
@@ -75,20 +87,49 @@ class MuaalemClient implements RecitationEngine {
           name: 'MuaalemClient');
       return RecitationResult.fromJson(json);
     } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      // اقرأ نصّ الاستجابة من الخادم (قد يحوي تفاصيل الخطأ).
+      // Read the server's error text (may contain details).
+      String serverDetail = '';
+      final data = e.response?.data;
+      if (data is Map) {
+        serverDetail =
+            (data['detail'] as String?) ?? (data['message'] as String?) ?? '';
+      } else if (data is String) {
+        serverDetail = data;
+      }
+
       // HTTP 404 يعني "لا تطابق" — نُعيد نتيجة بِرسالة بدل طرح استثناء.
       // HTTP 404 means "no match" — return a result with a message instead of
       // throwing.
-      if (e.response?.statusCode == 404) {
-        final json = e.response?.data is Map
-            ? Map<String, dynamic>.from(e.response!.data as Map)
-            : <String, dynamic>{};
+      if (code == 404) {
         return RecitationResult(
-          predictedPhonemes: json['predicted_phonemes'] as String?,
-          noMatchMessage:
-              (json['message'] as String?) ?? 'لا تطابق — جرّب زيادة errorRatio',
+          predictedPhonemes: data is Map
+              ? (data['predicted_phonemes'] as String?)
+              : null,
+          noMatchMessage: serverDetail.isNotEmpty
+              ? serverDetail
+              : 'لا تطابق — جرّب زيادة errorRatio',
         );
       }
-      log('MuaalemClient: correctRecitation error: ${e.message}',
+
+      // HTTP 500: خطأ داخلي في الخادم. السبب الأكثر شيوعاً هو صوت لا يحوي
+      // كلاماً واضحاً (صمت/ضوضاء)، أو صوت أطول من 15 ثانية، أو engine معطّل.
+      // نُعيد نتيجة بِرسالة ودودة بدل طرح استثناء قبيح.
+      // HTTP 500: internal server error. The most common cause is audio without
+      // clear speech (silence/noise), audio longer than 15s, or a dead engine.
+      // Return a result with a friendly message instead of an ugly exception.
+      if (code == 500) {
+        log('MuaalemClient: 500 server error. detail: $serverDetail',
+            name: 'MuaalemClient');
+        return const RecitationResult(
+          noMatchMessage:
+              'تعذّر معالجة الصوت — تأكّد من التحدّث بِوضوح أثناء التلاوة '
+              'وأنّ التسجيل أقلّ من 15 ثانية.',
+        );
+      }
+
+      log('MuaalemClient: correctRecitation error ($code): ${e.message}',
           name: 'MuaalemClient');
       rethrow;
     }
@@ -128,6 +169,10 @@ class MuaalemClient implements RecitationEngine {
       rethrow;
     }
   }
+
+  /// (online) يُعيد null دائماً — الخادم يبحث في القرآن ولا يُوفّر DB محليّة.
+  @override
+  String? getVerseText({required int suraIdx, required int ayaIdx}) => null;
 
   /// تحقّق من صحة الخادم (هل هو يعمل والنموذج محمّل؟).
   ///

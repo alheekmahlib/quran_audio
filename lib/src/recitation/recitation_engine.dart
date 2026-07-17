@@ -20,18 +20,25 @@ abstract interface class RecitationEngine {
   /// [wavBytes] بيانات ملفّ WAV (16kHz mono).
   /// [config] إعدادات المصحف (Hafs/Warsh، أطوال المدود...).
   /// [errorRatio] نسبة التسامح في المطابقة (0-1).
-  /// [referenceText] (اختياري، offline) نصّ الآية العثماني المُتوقَّع —
-  ///   إن أُعطي، يُقارن النموذج الفونيمات المتوقَّعة بِفونيمات النصّ المرجعي
-  ///   ويُنتج أخطاء تجويد مُفصّلة. إن لم يُعطَ، يُعيد الفونيمات المتوقَّعة فقط.
+  /// [suraIdx]/[ayaIdx] (offline) رقم السورة والآية — لِـ جلب المرجع من DB
+  ///   ومقارنة الفونيمات + كشف أخطاء التجويد بِشكل كامل.
+  /// [referenceText] (offline، بديل) نصّ الآية العثماني — يُستخدم إن لم
+  ///   يُعطَ suraIdx/ayaIdx. يُقارن بشكل أبسط (بِدون DB مرجعي كامل).
   Future<RecitationResult> correctRecitation({
     required final Uint8List wavBytes,
     final MuaalemConfig config = const MuaalemConfig(),
     final double errorRatio = 0.1,
+    final int? suraIdx,
+    final int? ayaIdx,
     final String? referenceText,
   });
 
   /// هل المحرّك جاهز لِلاستخدام؟ (خادم صحّي / نموذج محمّل).
   Future<bool> isHealthy();
+
+  /// (offline) ابحث عن نصّ آية عثماني من DB المرجعية.
+  /// يُعيد null في الوضع online أو إن لم تُوجد الآية.
+  String? getVerseText({required int suraIdx, required int ayaIdx});
 
   /// تحرير الموارد.
   void dispose();

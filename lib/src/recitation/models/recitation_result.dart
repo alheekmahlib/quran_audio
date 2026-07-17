@@ -68,26 +68,30 @@ class RecitationResult {
   List<RecitationError> get tashkeelErrors =>
       errors.where((e) => e.errorType == 'tashkeel').toList();
 
-  factory RecitationResult.fromJson(Map<String, dynamic> json) =>
-      RecitationResult(
-        start: json['start'] != null
-            ? SurahAyahPosition.fromJson(
-                Map<String, dynamic>.from(json['start'] as Map))
-            : null,
-        end: json['end'] != null
-            ? SurahAyahPosition.fromJson(
-                Map<String, dynamic>.from(json['end'] as Map))
-            : null,
-        predictedPhonemes: json['predicted_phonemes'] as String?,
-        referencePhonemes: json['reference_phonemes'] as String?,
-        uthmaniText: json['uthmani_text'] as String?,
-        noMatchMessage: json['message'] as String?,
-        errors: (json['errors'] as List<dynamic>?)
-                ?.map((e) => RecitationError.fromJson(
-                    Map<String, dynamic>.from(e as Map)))
-                .toList() ??
-            const [],
-      );
+  factory RecitationResult.fromJson(Map<String, dynamic> json) {
+    final uthmani = json['uthmani_text'] as String?;
+    return RecitationResult(
+      start: json['start'] != null
+          ? SurahAyahPosition.fromJson(
+              Map<String, dynamic>.from(json['start'] as Map))
+          : null,
+      end: json['end'] != null
+          ? SurahAyahPosition.fromJson(
+              Map<String, dynamic>.from(json['end'] as Map))
+          : null,
+      predictedPhonemes: json['predicted_phonemes'] as String?,
+      referencePhonemes: json['reference_phonemes'] as String?,
+      uthmaniText: uthmani,
+      noMatchMessage: json['message'] as String?,
+      errors: (json['errors'] as List<dynamic>?)
+              ?.map((e) => RecitationError.fromJson(
+                    Map<String, dynamic>.from(e as Map),
+                    uthmaniText: uthmani,
+                  ))
+              .toList() ??
+          const [],
+    );
+  }
 
   @override
   String toString() =>
@@ -108,6 +112,7 @@ class RecitationError {
     this.predictedPh,
     this.expectedLen,
     this.predictedLen,
+    this.wordText,
     this.refTajweedRules = const [],
     this.insertedTajweedRules = const [],
     this.replacedTajweedRules = const [],
@@ -151,6 +156,18 @@ class RecitationError {
   /// Actual length recited by the user.
   final int? predictedLen;
 
+  /// الكلمة القرآنية المتأثّرة بِهذا الخطأ (مثل "ٱلرَّحْمَٰنِ").
+  ///
+  /// يُملأ من الخادم بِاستخراج الكلمة من [RecitationResult.uthmaniText] عند
+  /// موضع [uthmaniPos]. في الوضع offline يُقدَّر نسبيّاً من `referenceText`.
+  /// null يعني أنّ الكلمة غير معروفة (لا يُعرض شيء).
+  ///
+  /// The Quranic word affected by this error (e.g. "ٱلرَّحْمَٰنِ"). Populated by
+  /// the server by extracting the word from [RecitationResult.uthmaniText] at
+  /// [uthmaniPos]. In offline mode it's estimated relatively from
+  /// `referenceText`. null means unknown (nothing shown).
+  final String? wordText;
+
   /// قواعد التجويد المرجعية المُطبَّقة على هذا الموضع.
   /// Reference tajweed rules applied at this position.
   final List<TajweedRule> refTajweedRules;
@@ -170,7 +187,8 @@ class RecitationError {
   /// وصف مختصر لِلخطأ بِالعربية.
   /// Brief error description in Arabic.
   String get description {
-    // ابحث عن اسم القاعدة في أيّ من القوائم الأربع
+    // ابحث عن اسم القاعدة في أيّ من القوائم الأربع.
+    // Look for the rule name in any of the four lists.
     final allRules = [
       ...refTajweedRules,
       ...insertedTajweedRules,
@@ -179,6 +197,13 @@ class RecitationError {
     ];
     if (allRules.isNotEmpty) {
       final ruleName = allRules.first.nameAr;
+      // نوع 'sifa' (صفة الحروف، offline): اعرض اسم القاعدة فقط بِدون أطوال.
+      // 'sifa' type (letter attribute, offline): show just the rule name.
+      if (speechErrorType == 'sifa') {
+        return ruleName;
+      }
+      // نوع 'replace' (من الخادم): اعرض الأطوال إن وُجدت.
+      // 'replace' type (from server): show lengths if present.
       if (speechErrorType == 'replace') {
         final exp = expectedLen ?? 0;
         final got = predictedLen ?? 0;
@@ -189,27 +214,66 @@ class RecitationError {
     return '$errorType: $speechErrorType';
   }
 
-  factory RecitationError.fromJson(Map<String, dynamic> j) => RecitationError(
-        errorType: (j['error_type'] as String?) ?? 'normal',
-        speechErrorType: (j['speech_error_type'] as String?) ?? 'replace',
-        uthmaniPos: (j['uthmani_pos'] as List<dynamic>?)
-                ?.map((e) => (e as num).toInt())
-                .toList() ??
-            const [0, 0],
-        phPos: (j['ph_pos'] as List<dynamic>?)
-                ?.map((e) => (e as num).toInt())
-                .toList() ??
-            const [0, 0],
-        expectedPh: j['expected_ph'] as String?,
-        // ملاحظة: المفتاح في quran-muaalem يحوي typo متعمّد.
-        predictedPh: (j['preditected_ph'] ?? j['predicted_ph']) as String?,
-        expectedLen: (j['expected_len'] as num?)?.toInt(),
-        predictedLen: (j['predicted_len'] as num?)?.toInt(),
-        refTajweedRules: _parseRules(j['ref_tajweed_rules']),
-        insertedTajweedRules: _parseRules(j['inserted_tajweed_rules']),
-        replacedTajweedRules: _parseRules(j['replaced_tajweed_rules']),
-        missingTajweedRules: _parseRules(j['missing_tajweed_rules']),
-      );
+  factory RecitationError.fromJson(
+    Map<String, dynamic> j, {
+    String? uthmaniText,
+  }) {
+    final uthmaniPos = (j['uthmani_pos'] as List<dynamic>?)
+            ?.map((e) => (e as num).toInt())
+            .toList() ??
+        const [0, 0];
+    return RecitationError(
+      errorType: (j['error_type'] as String?) ?? 'normal',
+      speechErrorType: (j['speech_error_type'] as String?) ?? 'replace',
+      uthmaniPos: uthmaniPos,
+      phPos: (j['ph_pos'] as List<dynamic>?)
+              ?.map((e) => (e as num).toInt())
+              .toList() ??
+          const [0, 0],
+      expectedPh: j['expected_ph'] as String?,
+      // ملاحظة: المفتاح في quran-muaalem يحوي typo متعمّد.
+      predictedPh: (j['preditected_ph'] ?? j['predicted_ph']) as String?,
+      expectedLen: (j['expected_len'] as num?)?.toInt(),
+      predictedLen: (j['predicted_len'] as num?)?.toInt(),
+      // استخرج الكلمة المتأثّرة من النصّ العثماني عند موضع الخطأ.
+      wordText: uthmaniText != null
+          ? _extractWordFromUthmani(uthmaniText, uthmaniPos)
+          : null,
+      refTajweedRules: _parseRules(j['ref_tajweed_rules']),
+      insertedTajweedRules: _parseRules(j['inserted_tajweed_rules']),
+      replacedTajweedRules: _parseRules(j['replaced_tajweed_rules']),
+      missingTajweedRules: _parseRules(j['missing_tajweed_rules']),
+    );
+  }
+
+  /// يستخرج الكلمة العثمانية المحيطة بِموضع حرفي.
+  ///
+  /// [uthmani] النصّ العثماني الكامل.
+  /// [pos] موضع [بداية، نهاية] كَـ فهارس حرفية في النصّ.
+  /// يُعيد الكلمة المحيطة (بين فراغَين) أو null إن فشل.
+  ///
+  /// Extracts the Uthmani word surrounding a character position.
+  static String? _extractWordFromUthmani(String uthmani, List<int> pos) {
+    if (pos.length < 2 || uthmani.isEmpty) return null;
+    final start = pos[0].clamp(0, uthmani.length).toInt();
+    final end = pos[1].clamp(start, uthmani.length).toInt();
+    // وسّع لِتشمل الكلمة كاملةً (إلى الفراغات المحيطة).
+    int wordStart = start;
+    while (wordStart > 0 && !_isUthmaniSeparator(uthmani[wordStart - 1])) {
+      wordStart--;
+    }
+    int wordEnd = end;
+    while (wordEnd < uthmani.length && !_isUthmaniSeparator(uthmani[wordEnd])) {
+      wordEnd++;
+    }
+    final word = uthmani.substring(wordStart, wordEnd).trim();
+    return word.isEmpty ? null : word;
+  }
+
+  /// هل الحرف فاصل كلمات (فراغ أو شرطة Tatweel)?
+  static bool _isUthmaniSeparator(String ch) {
+    return ch == ' ' || ch == '\u0640'; // فراغ أو كشيدة (Tatweel).
+  }
 
   static List<TajweedRule> _parseRules(dynamic v) {
     if (v is! List) return const [];
@@ -221,7 +285,8 @@ class RecitationError {
 
   @override
   String toString() => 'RecitationError($errorType/$speechErrorType: '
-      '${refTajweedRules.map((r) => r.nameAr).join(", ")})';
+      '${refTajweedRules.map((r) => r.nameAr).join(", ")}'
+      '${wordText != null ? " في \"$wordText\"" : ""})';
 }
 
 /// قاعدة تجويد مُطبَّقة على موضع معيّن.
