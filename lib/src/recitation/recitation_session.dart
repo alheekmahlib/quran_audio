@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' show log;
+import 'dart:io' show File;
 
 import 'package:get/get.dart';
 import 'package:record/record.dart';
@@ -139,6 +140,16 @@ class RecitationSession {
       final wavBytes = await PlatformIo.readFile(_recordingPath!);
       log('RecitationSession: read ${wavBytes.length} bytes',
           name: 'RecitationSession');
+
+      // 🔍 تشخيص: احتفظ بنسخة من التسجيل في مجلد واضح لِتحليلها offline.
+      // Diagnostic: keep a copy in Documents for offline Python analysis.
+      try {
+        final docDir = await PlatformIo.documentsDir;
+        final diagPath = '$docDir/last_recitation.wav';
+        await File(diagPath).writeAsBytes(wavBytes);
+        log('RecitationSession: DIAG copy saved → $diagPath',
+            name: 'RecitationSession');
+      } catch (_) {}
 
       // مرّر لِلمحرّك (online: خادم، offline: ONNX).
       // Pass to the engine (online: server, offline: ONNX).

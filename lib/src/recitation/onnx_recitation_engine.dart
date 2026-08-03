@@ -18,6 +18,7 @@ library;
 import 'dart:convert';
 import 'dart:developer' show log;
 import 'dart:io';
+import 'dart:math' show sqrt;
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
@@ -250,12 +251,113 @@ class OnnxRecitationEngine implements RecitationEngine {
       return const RecitationResult(noMatchMessage: 'تعذّر قراءة ملفّ الصوت');
     }
 
+    // 🔍 تشخيص: سجّل خصائص الصوت الوارد لِكشف مشاكل الإدخال.
+    // Audio diagnostics: log incoming signal characteristics.
+    final samples = decoded.samples;
+    final nSamples = samples.length;
+    double minV = samples.isNotEmpty ? samples[0] : 0;
+    double maxV = samples.isNotEmpty ? samples[0] : 0;
+    double sumSq = 0;
+    int nonZero = 0;
+    for (final s in samples) {
+      if (s < minV) minV = s;
+      if (s > maxV) maxV = s;
+      sumSq += s * s;
+      if (s.abs() > 1e-4) nonZero++;
+    }
+    final rms = nSamples > 0 ? sqrt(sumSq / nSamples) : 0.0;
+    log('OnnxRecitationEngine: audio in — '
+        'samples=$nSamples (${(nSamples / decoded.sampleRate).toStringAsFixed(1)}s) '
+        'sr=${decoded.sampleRate} '
+        'min=${minV.toStringAsFixed(3)} max=${maxV.toStringAsFixed(3)} '
+        'rms=${rms.toStringAsFixed(4)} nonZero=$nonZero',
+        name: 'OnnxEngine');
+
+    // 1ب) تطبيع السعة لِمطابقة توزيع بيانات التدريب.
+    //
+    // النموذج دُرِّب على تسجيلات everyayah النظيفة بِـ RMS ~0.05-0.10 وَpeak
+    // ~0.5-0.9. ميكروفون المحاكي (مع autoGain/noiseSuppress) يُنتج صوتاً
+    // خافتاً جدّاً (RMS ~0.007، peak ~0.04) — النموذج يتصرّف وكأنّه صمت.
+    //
+    // الحلّ: peak-normalize لِـ 0.7 (سعة قويّة لكنها آمنة من clipping)،
+    // ثمّ طبّق gain إضافيّ إذا كان RMS لا يزال منخفضاً.
+    //
+    // The model was trained on clean everyayah audio (RMS ~0.05-0.10). The
+    // simulator mic produces very faint audio (RMS ~0.007), so the model
+    // treats it as silence. Fix: peak-normalize to 0.7, then boost if RMS
+    // is still low.
+    final peak = maxV.abs() > minV.abs() ? maxV.abs() : minV.abs();
+    final Float64List normalized;
+    if (peak < 1e-6) {
+      // صمت تامّ — لا شيء نُطبّقه عليه.
+      normalized = samples;
+    } else {
+      // Scale لِـ peak = 0.7.
+      final scale = 0.7 / peak;
+      normalized = Float64List(nSamples);
+      for (var i = 0; i < nSamples; i++) {
+        normalized[i] = samples[i] * scale;
+      }
+      // تحقّق: إن كان RMS بعد الـ scaling لا يزال منخفضاً (< 0.03)،
+      // ارفعه لِـ 0.06 (نطاق التدريب).
+      double sumSq2 = 0;
+      for (final s in normalized) {
+        sumSq2 += s * s;
+      }
+      final rms2 = sqrt(sumSq2 / nSamples);
+      if (rms2 < 0.03) {
+        final boost = 0.06 / (rms2 < 1e-6 ? 1e-6 : rms2);
+        final cappedBoost = boost > 20.0 ? 20.0 : boost;
+        for (var i = 0; i < nSamples; i++) {
+          var v = normalized[i] * cappedBoost;
+          if (v > 1.0) v = 1.0;
+          if (v < -1.0) v = -1.0;
+          normalized[i] = v;
+        }
+        log('OnnxRecitationEngine: normalized (peak 0.7, boost '
+            '${cappedBoost.toStringAsFixed(2)}x)',
+            name: 'OnnxEngine');
+      } else {
+        log('OnnxRecitationEngine: normalized (peak 0.7, rms '
+            '${rms2.toStringAsFixed(4)} ok)',
+            name: 'OnnxEngine');
+      }
+    }
+
     // 2) شغّل الاستدلال
-    final outputs = _runInference(decoded.samples);
+    final outputs = _runInference(normalized);
 
     // 3) فكّ ترميز CTC greedy لِرأس phonemes + محاذاة الإطارات
     final nFrames =
         outputs['logits_0_phonemes']!.length ~/ 43; // vocab=43
+
+    // 🔍 تشخيص: افحص الـ logits الأوّلى لِتحديد ما إذا كان النموذج يُنتج
+    // all-blanks (id=0) بثقة عالية، أم أنّ هناك فونيمات.
+    {
+      const vocabSize = 43;
+      final log0 = outputs['logits_0_phonemes']!;
+      final lim = nFrames < 8 ? nFrames : 8;
+      final sample = <String>[];
+      for (var f = 0; f < lim; f++) {
+        int bestId = 0;
+        double bestVal = log0[f * vocabSize];
+        for (var v = 1; v < vocabSize; v++) {
+          final v2 = log0[f * vocabSize + v];
+          if (v2 > bestVal) { bestVal = v2; bestId = v; }
+        }
+        sample.add('$bestId(${bestVal.toStringAsFixed(1)})');
+      }
+      // أعلى logit عبر كلّ الإطارات لِكشف التشتّت.
+      double maxLogit = -1e9;
+      for (var i = 0; i < log0.length; i++) {
+        if (log0[i] > maxLogit) maxLogit = log0[i];
+      }
+      log('OnnxRecitationEngine: logits0 — '
+          'nFrames=$nFrames frames[:8]=${sample.join(' ')} '
+          'globalMax=${maxLogit.toStringAsFixed(2)}',
+          name: 'OnnxEngine');
+    }
+
     final decodeResult = _ctcGreedyDecodeAligned(
       outputs['logits_0_phonemes']!,
       nFrames,
@@ -264,6 +366,9 @@ class OnnxRecitationEngine implements RecitationEngine {
     final predictedTokens =
         phonemeIds.map((id) => _phonemeIdToToken[id] ?? '?').join();
     final predictedPhonemes = predictedTokens.replaceAll('[PAD]', '').trim();
+    log('OnnxRecitationEngine: decoded → ${phonemeIds.length} ids: '
+        '$predictedPhonemes',
+        name: 'OnnxEngine');
 
     // 4) فكّ ترميز رؤوس الصفات عند مواضع الفونيمات المتوقَّعة
     final sifatPerPhoneme = _decodeSifatAtPhonemes(outputs, decodeResult);
