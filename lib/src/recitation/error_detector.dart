@@ -139,8 +139,16 @@ void _checkMatchErrors(
     }
   }
 
-  // 2) خطأ في الصفات (إن كانت المجموعة في المرجع)
-  if (refG.startIdx < referenceVerse.sifat.length) {
+  // 2) خطأ في الصفات (إن كانت المجموعة في المرجع).
+  //    نُفحص الصفات فقط لِلسواكن/الحروف الصحيحة — الحركات (harakat) لا
+  //    تحمل صفات تجويد ذات معنى، وَرؤوس الصفات على الحركات تكون ضوضاء.
+  //    هذا يُطابق سلوك الخادم الّذي يُنتج أخطاء صفات فقط على الحروف.
+  //
+  //    We only check sifat for consonants, not for harakat (vowels have no
+  //    meaningful sifa, and sifa heads on harakat are noise). This matches
+  //    the server, which only emits sifa errors on letters.
+  if (!_harakatIds.contains(refG.baseId) &&
+      refG.startIdx < referenceVerse.sifat.length) {
     final refSifat = referenceVerse.sifat[refG.startIdx];
     final predIdx = predG.startIdx;
     if (predIdx < sifatPerPhoneme.length) {
