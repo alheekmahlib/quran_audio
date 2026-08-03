@@ -184,34 +184,65 @@ class RecitationError {
   /// Missing tajweed rules (not applied).
   final List<TajweedRule> missingTajweedRules;
 
-  /// وصف مختصر لِلخطأ بِالعربية.
-  /// Brief error description in Arabic.
+  /// وصف مختصر لِلخطأ بِالعربية واضح وَمفهوم (مثل الخادم).
+  ///
+  /// لا يُظهر قيمَين إنجليزيّة خام (insert/delete/replace) أبداً —
+  /// بل يُترجمها لِعربية واضحة بِناءً على نوع الخطأ + القاعدة.
+  ///
+  /// Clear, reader-friendly Arabic description (server-style). Never shows
+  /// raw English enum values; translates them based on type + rule.
   String get description {
-    // ابحث عن اسم القاعدة في أيّ من القوائم الأربع.
-    // Look for the rule name in any of the four lists.
+    // اجمع كلّ القواعد المُتاحة.
+    // Gather all available rules.
     final allRules = [
       ...refTajweedRules,
       ...insertedTajweedRules,
       ...replacedTajweedRules,
       ...missingTajweedRules,
     ];
-    if (allRules.isNotEmpty) {
-      final ruleName = allRules.first.nameAr;
-      // نوع 'sifa' (صفة الحروف، offline): اعرض اسم القاعدة فقط بِدون أطوال.
-      // 'sifa' type (letter attribute, offline): show just the rule name.
-      if (speechErrorType == 'sifa') {
-        return ruleName;
+    final ruleName = allRules.isNotEmpty ? allRules.first.nameAr : null;
+
+    // فعل الخطأ بِالعربية حسب نوع الكلام (insert/delete/replace).
+    // Arabic verb for the error based on speech_error_type.
+    final verb = switch (speechErrorType) {
+      'insert' => 'زائد',
+      'delete' => 'مفقود',
+      'replace' => 'استبدال',
+      _ => speechErrorType,
+    };
+
+    // 1) أخطاء التجويد (tajweed): اعرض القاعدة + الأطوال (إن كانت مدوداً).
+    // Tajweed errors: show rule name + lengths (for madds).
+    if (errorType == 'tajweed') {
+      if (ruleName != null) {
+        // مدّ: اعرض الطول المتوقَّع vs الفعلي.
+        // Madd: show expected vs actual length.
+        if (expectedLen != null && predictedLen != null) {
+          return '$ruleName: المتوقع $expectedLen، الفعلي $predictedLen';
+        }
+        // قاعدة بِلا أطوال: قل "زائد/مفقود: <القاعدة>" أو "<القاعدة>".
+        // Rule without lengths: "extra/missing: <rule>" or just "<rule>".
+        if (speechErrorType == 'replace') return ruleName;
+        return '$verb: $ruleName';
       }
-      // نوع 'replace' (من الخادم): اعرض الأطوال إن وُجدت.
-      // 'replace' type (from server): show lengths if present.
-      if (speechErrorType == 'replace') {
-        final exp = expectedLen ?? 0;
-        final got = predictedLen ?? 0;
-        return '$ruleName: المتوقع $exp، الفعلي $got';
-      }
-      return '$ruleName ($speechErrorType)';
+      // tajweed بِلا قاعدة (نادر): استخدم فعل الخطأ.
+      // Tajweed without a rule (rare): fall back to the verb.
+      return 'خطأ تجويد ($verb)';
     }
-    return '$errorType: $speechErrorType';
+
+    // 2) أخطاء التشكيل (tashkeel): "تشكيل <زائد/مفقود>".
+    // Tashkeel errors: "haraka <extra/missing>".
+    if (errorType == 'tashkeel') {
+      return 'تشكيل $verb';
+    }
+
+    // 3) أخطاء النطق (normal): "حرف <زائد/مفقود>" أو "نطق خاطئ".
+    // Normal errors: "letter <extra/missing>" or "wrong pronunciation".
+    return switch (speechErrorType) {
+      'insert' => 'حرف زائد',
+      'delete' => 'حرف مفقود',
+      _ => 'نطق خاطئ',
+    };
   }
 
   factory RecitationError.fromJson(
