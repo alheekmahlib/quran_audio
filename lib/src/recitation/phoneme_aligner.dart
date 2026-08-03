@@ -1,56 +1,107 @@
-/// محاذاة فونيمات (Levenshtein / Wagner-Fischer).
+/// محاذاة فونيمات بِـ تجميع المدود (Group-Based Alignment).
 ///
-/// تُقارن قائمتَي فونيمات (متوقَّع vs مرجعي) وتُنتج قائمة عمليّات
-/// (match/insert/delete/replace) مع مواضعها.
-///
-/// الطبقة 2 من خطّة مقارنة التجويد.
+/// الطبقة 2 المُحسَّنة: بدل محاذاة فونيمات مسطّحة، نُجمّع كلّ حرف + حركته +
+/// مدّه في "وحدة واحدة" (Phoneme Group)، ثمّ نُحاذي الوحدات. هكذا:
+/// - المدّ `اااا` يُعامل كَـ وحدة واحدة (لا 4 فونيمات منفصلة).
+/// - الأخطاء تُحدَّد على مستوى الكلمة/الحرف، لا الإطار.
+/// - يُطابق منطق خادم quran-muaalem.
 library;
 
-/// عمليّة محاذاة واحدة.
-class AlignOp {
-  AlignOp({
+/// مجموعة فونيمات (حرف أساسي + حركته + مدّه).
+class PhonemeGroup {
+  PhonemeGroup({
+    required this.ids,
+    required this.baseId,
+    required this.startIdx,
+    required this.endIdx,
+    this.isMadd = false,
+  });
+
+  /// كلّ معرّفات الفونيمات في المجموعة (مثلاً [29, 29, 29] لِـ مدّ ألف 3).
+  final List<int> ids;
+
+  /// المعرّف الأساسي (أوّل حرف، يُستخدم لِلمحاذاة).
+  final int baseId;
+
+  /// موضع البداية في القائمة الأصليّة (0-based).
+  final int startIdx;
+
+  /// موضع النهاية (exclusive).
+  final int endIdx;
+
+  /// هل هذه مجموعة مدّ (طول > 1)؟
+  final bool isMadd;
+
+  /// طول المجموعة (عدد الفونيمات).
+  int get length => ids.length;
+
+  @override
+  String toString() => 'Group(base=$baseId, len=$length, madd=$isMadd)';
+}
+
+/// يُجمّع قائمة معرّفات فونيمات مسطّحة إلى مجموعات.
+///
+/// القاعدة: كلّ حرف ساكن/متحرّك يُشكّل مجموعة. الحروف المتكرّرة المتجاورة
+/// (مثل ااا) تُدمج في مجموعة واحدة (مدّ).
+List<PhonemeGroup> chunkPhonemes(List<int> ids) {
+  if (ids.isEmpty) return const [];
+
+  final groups = <PhonemeGroup>[];
+  int i = 0;
+  while (i < ids.length) {
+    final baseId = ids[i];
+    int j = i + 1;
+    // ادمج كلّ الفونيمات المتكرّرة المتجاورة
+    while (j < ids.length && ids[j] == baseId) {
+      j++;
+    }
+    groups.add(PhonemeGroup(
+      ids: ids.sublist(i, j),
+      baseId: baseId,
+      startIdx: i,
+      endIdx: j,
+      isMadd: (j - i) > 1,
+    ));
+    i = j;
+  }
+  return groups;
+}
+
+/// عمليّة محاذاة على مستوى المجموعات.
+class GroupAlignOp {
+  GroupAlignOp({
     required this.type,
-    this.refId,
-    this.predId,
-    required this.refIdx,
-    required this.predIdx,
+    required this.refGroup,
+    required this.predGroup,
   });
 
   /// 'match' | 'insert' | 'delete' | 'replace'
   final String type;
 
-  /// معرّف الفونيم المرجعي (null لِـ insert).
-  final int? refId;
+  /// المجموعة المرجعيّة (null لِـ insert).
+  final PhonemeGroup? refGroup;
 
-  /// معرّف الفونيم المتوقَّع (null لِـ delete).
-  final int? predId;
-
-  /// الموضع في المرجع (0-based). لِـ insert = موضع الإدراج.
-  final int refIdx;
-
-  /// الموضع في المتوقَّع (0-based). لِـ delete = موضع الحذف.
-  final int predIdx;
+  /// المجموعة المتوقَّعة (null لِـ delete).
+  final PhonemeGroup? predGroup;
 
   @override
-  String toString() => '$type(ref=$refId@$refIdx, pred=$predId@$predIdx)';
+  String toString() =>
+      '$type(ref=${refGroup?.baseId}@${refGroup?.startIdx}, '
+      'pred=${predGroup?.baseId}@${predGroup?.startIdx})';
 }
 
-/// يحاذي قائمتَي فونيمات ويُعيد قائمة العمليّات.
+/// يحاذي مجموعتي فونيمات (مرجعيّة vs متوقَّعة) على مستوى المجموعة.
 ///
-/// [reference] الفونيمات المرجعية الصحيحة.
-/// [predicted] الفونيمات المتوقَّعة من النموذج.
-///
-/// يُعيد قائمة AlignOp مرتّبة حسب التسلّسل الزمني.
-List<AlignOp> alignPhonemes(
-  List<int> reference,
-  List<int> predicted,
+/// يستخدم Wagner-Fischer على `baseId` لِكلّ مجموعة.
+List<GroupAlignOp> alignGroups(
+  List<PhonemeGroup> refGroups,
+  List<PhonemeGroup> predGroups,
 ) {
-  final n = reference.length;
-  final m = predicted.length;
-
+  final n = refGroups.length;
+  final m = predGroups.length;
   if (n == 0 && m == 0) return const [];
 
-  // جدول المسافات (Wagner-Fischer).
+  // جدول المسافات
   final dp = List.generate(n + 1, (_) => List<int>.filled(m + 1, 0));
   for (int i = 0; i <= n; i++) {
     dp[i][0] = i;
@@ -61,60 +112,50 @@ List<AlignOp> alignPhonemes(
 
   for (int i = 1; i <= n; i++) {
     for (int j = 1; j <= m; j++) {
-      if (reference[i - 1] == predicted[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1]; // match (cost 0)
+      if (refGroups[i - 1].baseId == predGroups[j - 1].baseId) {
+        dp[i][j] = dp[i - 1][j - 1]; // match
       } else {
         dp[i][j] = 1 + [
-          dp[i - 1][j], // delete
-          dp[i][j - 1], // insert
-          dp[i - 1][j - 1], // replace
+          dp[i - 1][j],
+          dp[i][j - 1],
+          dp[i - 1][j - 1],
         ].reduce((a, b) => a < b ? a : b);
       }
     }
   }
 
-  // Backtrack لِاستخراج العمليّات.
-  final ops = <AlignOp>[];
+  // Backtrack
+  final ops = <GroupAlignOp>[];
   int i = n, j = m;
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && reference[i - 1] == predicted[j - 1]) {
-      ops.add(AlignOp(
+    if (i > 0 && j > 0 &&
+        refGroups[i - 1].baseId == predGroups[j - 1].baseId) {
+      ops.add(GroupAlignOp(
         type: 'match',
-        refId: reference[i - 1],
-        predId: predicted[j - 1],
-        refIdx: i - 1,
-        predIdx: j - 1,
+        refGroup: refGroups[i - 1],
+        predGroup: predGroups[j - 1],
       ));
       i--;
       j--;
     } else if (i > 0 && (j == 0 || dp[i - 1][j] <= dp[i][j - 1])) {
-      // delete: فونيم مرجعي مفقود في المتوقَّع
-      ops.add(AlignOp(
+      ops.add(GroupAlignOp(
         type: 'delete',
-        refId: reference[i - 1],
-        predId: null,
-        refIdx: i - 1,
-        predIdx: j,
+        refGroup: refGroups[i - 1],
+        predGroup: null,
       ));
       i--;
     } else if (j > 0 && (i == 0 || dp[i - 1][j] > dp[i][j - 1])) {
-      // insert: فونيم زائد في المتوقَّع
-      ops.add(AlignOp(
+      ops.add(GroupAlignOp(
         type: 'insert',
-        refId: null,
-        predId: predicted[j - 1],
-        refIdx: i,
-        predIdx: j - 1,
+        refGroup: null,
+        predGroup: predGroups[j - 1],
       ));
       j--;
     } else {
-      // replace: فونيم مختلف
-      ops.add(AlignOp(
+      ops.add(GroupAlignOp(
         type: 'replace',
-        refId: reference[i - 1],
-        predId: predicted[j - 1],
-        refIdx: i - 1,
-        predIdx: j - 1,
+        refGroup: refGroups[i - 1],
+        predGroup: predGroups[j - 1],
       ));
       i--;
       j--;
@@ -126,8 +167,12 @@ List<AlignOp> alignPhonemes(
 
 /// إحصاءات المحاذاة.
 class AlignStats {
-  AlignStats({required this.matches, required this.insertions,
-      required this.deletions, required this.replacements});
+  AlignStats({
+    required this.matches,
+    required this.insertions,
+    required this.deletions,
+    required this.replacements,
+  });
   final int matches;
   final int insertions;
   final int deletions;
@@ -145,8 +190,8 @@ class AlignStats {
       '(${(accuracy * 100).toStringAsFixed(1)}%)';
 }
 
-/// احسب إحصاءات سريعة من قائمة ops.
-AlignStats computeStats(List<AlignOp> ops) {
+/// احسب إحصاءات سريعة من قائمة عمليّات المجموعات.
+AlignStats computeGroupStats(List<GroupAlignOp> ops) {
   int m = 0, ins = 0, del = 0, rep = 0;
   for (final op in ops) {
     switch (op.type) {
@@ -165,5 +210,9 @@ AlignStats computeStats(List<AlignOp> ops) {
     }
   }
   return AlignStats(
-    matches: m, insertions: ins, deletions: del, replacements: rep);
+    matches: m,
+    insertions: ins,
+    deletions: del,
+    replacements: rep,
+  );
 }

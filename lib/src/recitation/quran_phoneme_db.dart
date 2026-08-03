@@ -104,15 +104,59 @@ class QuranPhonemeDb {
     final raw = _db[verseKey];
     if (raw == null) return null;
     final m = raw as Map<String, dynamic>;
+    final phonemeIds = (m['pi'] as List).cast<int>();
+    final sifatRaw = (m['s'] as List)
+        .map((e) => (e as List).cast<int>())
+        .toList(growable: false);
+
+    // الفجوة 1: وسّع sifat لتطابق طول phonemeIds.
+    // الـDB الأصليّ يُخزّن sifat كَـ صفّ لِكلّ حرف عثماني، لكنّ phonemeIds
+    // كَـ صفّ لِكلّ فونيم (وبعض الحروف تُولّد فونيمات متعدّدة). نُوسّع
+    // بِالتوزيع النسبي حتّى يطابق الطول.
+    // Expand sifat to match phonemeIds length. The DB stores sifat per Uthmani
+    // letter, but phonemeIds per phoneme (some letters generate multiple
+    // phonemes). Expand by proportional distribution to match the length.
+    final sifatExpanded = _expandSifatToPhonemes(sifatRaw, phonemeIds.length);
+
     return ReferenceVerse(
       verseKey: verseKey,
       uthmani: m['u'] as String,
       phonemes: m['p'] as String,
-      phonemeIds: (m['pi'] as List).cast<int>(),
-      sifat: (m['s'] as List)
-          .map((e) => (e as List).cast<int>())
-          .toList(growable: false),
+      phonemeIds: phonemeIds,
+      sifat: sifatExpanded,
     );
+  }
+
+  /// يُوسّع قائمة sifat (عدد الحروف) لتطابق عدد الفونيمات بِالتوزيع النسبي.
+  ///
+  /// [sifat] صفوف sifat الأصليّة (واحد لِكلّ حرف عثماني).
+  /// [targetLen] عدد الفونيمات المطلوب (طول phonemeIds).
+  ///
+  /// يُعيد قائمة بِطول targetLen، حيث يُكرّر كلّ صفّ حسب نسبة فونيماته.
+  List<List<int>> _expandSifatToPhonemes(
+    List<List<int>> sifat,
+    int targetLen,
+  ) {
+    if (sifat.isEmpty || targetLen == 0) return sifat;
+    if (sifat.length >= targetLen) return sifat.sublist(0, targetLen);
+
+    // وزّع targetLen موضعاً على sifat.length صفّاً نسبيّاً.
+    // Distribute targetLen positions across sifat.length rows proportionally.
+    final result = <List<int>>[];
+    final ratio = targetLen / sifat.length;
+    for (var i = 0; i < sifat.length; i++) {
+      // عدد الفونيمات لهذا الحرف ≈ ratio (مع التقريب).
+      final count = (ratio * (i + 1)).round() - (ratio * i).round();
+      final n = count < 1 ? 1 : count;
+      for (var j = 0; j < n && result.length < targetLen; j++) {
+        result.add(sifat[i]);
+      }
+    }
+    // إن نقص (بسبب التقريب)، املأ بِآخر صفّ.
+    while (result.length < targetLen) {
+      result.add(sifat.last);
+    }
+    return result;
   }
 
   /// هل الآية موجودة في الـDB؟

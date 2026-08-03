@@ -269,18 +269,31 @@ class OnnxRecitationEngine implements RecitationEngine {
     final sifatPerPhoneme = _decodeSifatAtPhonemes(outputs, decodeResult);
 
     // 5) المسار الكامل: إن أُعطي suraIdx/ayaIdx وَالـDB محمّلة،
-    //    استخدم الطبقات الثلاث (DB + محاذاة + كشّاف أخطاء).
+    //    استخدم المحاذاة الجماعيّة + كشّاف الأخطاء المُحسَّن.
     if (suraIdx != null && ayaIdx != null && _quranDb.isLoaded) {
       final ref = _quranDb.getReference(suraIdx: suraIdx, ayaIdx: ayaIdx);
       if (ref != null) {
-        // الطبقة 2: محاذاة Levenshtein
-        final ops = alignPhonemes(ref.phonemeIds, phonemeIds);
-        final stats = computeStats(ops);
-        log('OnnxRecitationEngine: aligned ${ref.verseKey} — '
-            'pred=${phonemeIds.length} ref=${ref.phonemeIds.length} $stats',
+        // الطبقة 2 (مُحسَّنة): تجميع المدود + محاذاة جماعيّة.
+        final refGroups = chunkPhonemes(ref.phonemeIds);
+        final predGroups = chunkPhonemes(phonemeIds);
+        final ops = alignGroups(refGroups, predGroups);
+        final stats = computeGroupStats(ops);
+        log('OnnxRecitationEngine: group-aligned ${ref.verseKey} — '
+            'refGroups=${refGroups.length} predGroups=${predGroups.length} $stats',
             name: 'OnnxEngine');
 
-        // الطبقة 3: كشّاف الأخطاء
+        // رفض بِـ 0 تطابقات (تلاوة غير مفهومة).
+        if (stats.matches == 0 && stats.totalOps > 0) {
+          return RecitationResult(
+            uthmaniText: ref.uthmani,
+            predictedPhonemes: predictedPhonemes,
+            noMatchMessage:
+                'لم يتمكّن النموذج من التعرّف على التلاوة. حاول مرّة أخرى '
+                'بِالتحدّث بِوضوح أقرب من الميكروفون.',
+          );
+        }
+
+        // الطبقة 3 (مُحسَّنة): كشّاف الأخطاء الجماعيّ.
         final errors = buildErrorsFromAlignment(
           ops: ops,
           sifatPerPhoneme: _sifatMapsToInts(sifatPerPhoneme),
@@ -293,9 +306,10 @@ class OnnxRecitationEngine implements RecitationEngine {
           predictedPhonemes: predictedPhonemes,
           referencePhonemes: ref.phonemes,
           errors: errors,
+          start: SurahAyahPosition(suraIdx: suraIdx, ayaIdx: ayaIdx),
+          end: SurahAyahPosition(suraIdx: suraIdx, ayaIdx: ayaIdx),
         );
       }
-      // الآية غير موجودة في DB (مثل الحروف المقطّعة) — استمر لِـ referenceText
       log('OnnxRecitationEngine: verse $suraIdx:$ayaIdx not in DB',
           name: 'OnnxEngine', level: 900);
     }
