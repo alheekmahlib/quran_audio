@@ -211,7 +211,16 @@ void _checkReplaceError(
   ));
 }
 
-/// يفحص اختلاف الصفات ويُضيف أخطاءً لِكلّ صفة مختلفة.
+/// يفحص اختلاف الصفات ويُضيف خطأً **واحداً** يجمع كلّ الصفات المختلفة.
+///
+/// بدل إنشاء خطأ منفصل لِكلّ رأس صفة (مما يُنتج عشرات الأخطاء لِكلّ
+/// فونيم)، نجمع كلّ الصفات المختلفة في خطأ تجويد واحد بِقائمة
+/// TajweedRule. هذا يُطابق سلوك الخادم: بطاقة خطأ واحدة لِكلّ حرف.
+///
+/// Instead of one error per sifa head (which explodes to dozens of errors
+/// per phoneme), aggregate all differing sifat into ONE tajweed error with
+/// a list of TajweedRules. This matches the server: one error card per
+/// letter.
 void _checkSifatDiff({
   required List<int> refSifat,
   required List<int> predSifat,
@@ -220,25 +229,30 @@ void _checkSifatDiff({
   String? expectedPh,
   String? predictedPh,
 }) {
+  final rules = <TajweedRule>[];
   for (var h = 0; h < _sifatHeadNames.length; h++) {
     if (h >= refSifat.length || h >= predSifat.length) break;
-    if (refSifat[h] != predSifat[h] && refSifat[h] != 0) {
+    // refSifat[h]=0 يعني "لا تنطبق" (الصفة غير مُعرَّفة لِهذا الحرف).
+    // تجاهلها — لا نُناشد المستخدم على صفة غير ذات صلة.
+    if (refSifat[h] == 0) continue;
+    if (refSifat[h] != predSifat[h]) {
       final headName = _sifatHeadNames[h];
-      errors.add(RecitationError(
-        errorType: 'tajweed',
-        speechErrorType: 'replace',
-        phPos: phPos,
-        expectedPh: expectedPh,
-        predictedPh: predictedPh,
-        refTajweedRules: [
-          TajweedRule(
-            nameAr: _sifatNameAr[headName] ?? headName,
-            nameEn: headName,
-            correctnessType: 'sifa',
-          ),
-        ],
+      rules.add(TajweedRule(
+        nameAr: _sifatNameAr[headName] ?? headName,
+        nameEn: headName,
+        correctnessType: 'sifa',
       ));
     }
+  }
+  if (rules.isNotEmpty) {
+    errors.add(RecitationError(
+      errorType: 'tajweed',
+      speechErrorType: 'replace',
+      phPos: phPos,
+      expectedPh: expectedPh,
+      predictedPh: predictedPh,
+      refTajweedRules: rules,
+    ));
   }
 }
 
