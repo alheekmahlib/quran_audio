@@ -58,6 +58,28 @@ List<int> _uthmaniPosForRefGroup(PhonemeGroup g, ReferenceVerse ref) {
   return [start, end];
 }
 
+/// يستخرج الكلمة العثمانيّة المحيطة بِموضع [start, end] (مثل النموذج).
+///
+/// يُستخدم لِعرض الكلمة المتأثّرة في بطاقة الخطأ.
+String? _extractWord(String uthmani, List<int> pos) {
+  if (pos.length < 2 || uthmani.isEmpty) return null;
+  if (pos[0] == 0 && pos[1] == 0) return null; // insert zero-width
+  final start = pos[0].clamp(0, uthmani.length).toInt();
+  final end = pos[1].clamp(start, uthmani.length).toInt();
+  int wordStart = start;
+  while (wordStart > 0 && !_isSep(uthmani[wordStart - 1])) {
+    wordStart--;
+  }
+  int wordEnd = end;
+  while (wordEnd < uthmani.length && !_isSep(uthmani[wordEnd])) {
+    wordEnd++;
+  }
+  final w = uthmani.substring(wordStart, wordEnd).trim();
+  return w.isEmpty ? null : w;
+}
+
+bool _isSep(String ch) => ch == ' ' || ch == '\u0640';
+
 /// موضع عثمانيّ تقريبيّ لِـ insert (مربوط بِأقرب مرجع).
 List<int> _uthmaniPosForInsert(GroupAlignOp op, ReferenceVerse ref) {
   // insert ليس لَه refGroup — استخدم zero-width (مثل الخادم لِـ insert).
@@ -82,15 +104,16 @@ void _handleMatch(
   final uthmaniPos = _uthmaniPosForRefGroup(refG, ref);
   final phPos = [predG.startIdx, predG.endIdx];
   final refRules = _refRulesForGroup(refG, ref);
+  final word = _extractWord(ref.uthmani, uthmaniPos);
 
   if (refRules.isNotEmpty) {
     // فرع الخادم (line 367-411): لِكلّ قاعدة تجويد، تحقّق.
     for (final rule in refRules) {
       final ct = rule.correctnessType ?? '';
       if (ct == 'count') {
-        // مدّ: قارن الطول.
-        final expLen = rule.goldenLen ?? refG.length;
-        final predLen = predG.length;
+        // مدّ: قارن الطول (عدد الحركات).
+        final expLen = rule.goldenLen ?? _maddLength(refG);
+        final predLen = _maddLength(predG);
         if (expLen != predLen) {
           errors.add(RecitationError(
             errorType: 'tajweed',
@@ -101,6 +124,7 @@ void _handleMatch(
             predictedPh: _groupToken(predG, idToToken),
             expectedLen: expLen,
             predictedLen: predLen,
+            wordText: word,
             refTajweedRules: [rule],
           ));
         }
@@ -112,11 +136,29 @@ void _handleMatch(
     }
     // فرع الحركة الزائدة (line 400-411): إن انتهت المرجع بحركة واختلفت.
     if (harakatIds.contains(refG.lastId) && refG.lastId != predG.lastId) {
-      errors.add(_tashkeelError(refG, predG, uthmaniPos, phPos, idToToken));
+      final err = _tashkeelError(refG, predG, uthmaniPos, phPos, idToToken);
+      errors.add(RecitationError(
+        errorType: err.errorType,
+        speechErrorType: err.speechErrorType,
+        uthmaniPos: err.uthmaniPos,
+        phPos: err.phPos,
+        expectedPh: err.expectedPh,
+        predictedPh: err.predictedPh,
+        wordText: word,
+      ));
     }
   } else if (harakatIds.contains(refG.lastId)) {
     // فرع الخادم (line 414-422): فرق في الحركة فقط → tashkeel.
-    errors.add(_tashkeelError(refG, predG, uthmaniPos, phPos, idToToken));
+    final err = _tashkeelError(refG, predG, uthmaniPos, phPos, idToToken);
+    errors.add(RecitationError(
+      errorType: err.errorType,
+      speechErrorType: err.speechErrorType,
+      uthmaniPos: err.uthmaniPos,
+      phPos: err.phPos,
+      expectedPh: err.expectedPh,
+      predictedPh: err.predictedPh,
+      wordText: word,
+    ));
   } else {
     // فرع الخادم (line 429-445): حرف ساكن مختلف.
     // إن انتهى المتوقَّع بِحركة → tashkeel، وإلاّ → normal.
@@ -128,6 +170,7 @@ void _handleMatch(
       phPos: phPos,
       expectedPh: _groupToken(refG, idToToken),
       predictedPh: _groupToken(predG, idToToken),
+      wordText: word,
     ));
   }
 }
@@ -142,6 +185,7 @@ void _handleInsert(
   final predG = op.predGroup!;
   final uthmaniPos = _uthmaniPosForInsert(op, ref);
   final phPos = [predG.startIdx, predG.endIdx];
+  // insert ليس لَه موضع مرجعيّ → wordText غير معروف (مثل الخادم).
   errors.add(RecitationError(
     errorType: 'normal', // مثل الخادم line 294
     speechErrorType: 'insert',
@@ -162,6 +206,7 @@ void _handleDelete(
   final refG = op.refGroup!;
   final uthmaniPos = _uthmaniPosForRefGroup(refG, ref);
   final phPos = [refG.startIdx, refG.endIdx];
+  final word = _extractWord(ref.uthmani, uthmaniPos);
   // مثل الخادم line 359-361: tajweed إن كان لِلحرف قاعدة، وإلاّ normal.
   final refRules = _refRulesForGroup(refG, ref);
   final isTajweed = refRules.isNotEmpty;
@@ -172,6 +217,7 @@ void _handleDelete(
     phPos: phPos,
     expectedPh: _groupToken(refG, idToToken),
     predictedPh: '',
+    wordText: word,
     refTajweedRules: isTajweed ? refRules : const [],
   ));
 }
@@ -187,6 +233,7 @@ void _handleReplace(
   final predG = op.predGroup!;
   final uthmaniPos = _uthmaniPosForRefGroup(refG, ref);
   final phPos = [predG.startIdx, predG.endIdx];
+  final word = _extractWord(ref.uthmani, uthmaniPos);
   final refRules = _refRulesForGroup(refG, ref);
 
   if (refRules.isNotEmpty) {
@@ -196,8 +243,8 @@ void _handleReplace(
       int? expLen;
       int? predLen;
       if (ct == 'count') {
-        expLen = rule.goldenLen ?? refG.length;
-        predLen = predG.length;
+        expLen = rule.goldenLen ?? _maddLength(refG);
+        predLen = _maddLength(predG);
       }
       errors.add(RecitationError(
         errorType: 'tajweed',
@@ -208,6 +255,7 @@ void _handleReplace(
         predictedPh: _groupToken(predG, idToToken),
         expectedLen: expLen,
         predictedLen: predLen,
+        wordText: word,
         refTajweedRules: [rule],
       ));
     }
@@ -220,6 +268,7 @@ void _handleReplace(
       phPos: phPos,
       expectedPh: _groupToken(refG, idToToken),
       predictedPh: _groupToken(predG, idToToken),
+      wordText: word,
     ));
   }
 }
@@ -236,8 +285,25 @@ bool _groupsEqual(PhonemeGroup a, PhonemeGroup b) {
 }
 
 /// يحوّل مجموعة إلى رمز نصّي (مثل "اا" أو "بِ").
+///
+/// ملاحظة: الأحرف الـ[PAD] تُستبدل بِـ '?' لِتسهيل القراءة.
 String _groupToken(PhonemeGroup g, PhonemeIdMap idToToken) {
   return g.ids.map((id) => idToToken[id] ?? '?').join();
+}
+
+/// يحسب طول المدّ لِمجموعة، مُطابقاً `rule.count` الخادم.
+///
+/// الخادم: `pred_text.count(base)` — أي عدد تكرار الحرف الأساسيّ.
+/// لِمجموعة مدّ (كلّ الفونيمات نفس baseId) = عدد الفونيمات.
+/// لكن إن انتهت بِحركة، فلا تُحتسب في المدّ (مثل الخادم).
+///
+/// Count madd length matching the server's rule.count.
+int _maddLength(PhonemeGroup g) {
+  // إن انتهت المجموعة بِحركة مختلفة عن baseId، أسقطها من العدّ.
+  if (g.length > 1 && harakatIds.contains(g.lastId) && g.lastId != g.baseId) {
+    return g.length - 1;
+  }
+  return g.length;
 }
 
 /// يبني خطأ tashkeel (مثل `get_tasshkeel_error` الخادم).

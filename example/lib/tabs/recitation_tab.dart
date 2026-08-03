@@ -1043,15 +1043,16 @@ class _ErrorCard extends StatelessWidget {
                 ],
               ],
             ),
-            if (error.expectedPh != null || error.predictedPh != null) ...[
+            if ((error.expectedPh != null && error.expectedPh!.isNotEmpty) ||
+                (error.predictedPh != null && error.predictedPh!.isNotEmpty)) ...[
               const SizedBox(height: 6),
               Wrap(
                 spacing: 12,
                 runSpacing: 4,
                 children: [
-                  if (error.expectedPh != null)
+                  if (error.expectedPh != null && error.expectedPh!.isNotEmpty)
                     _phChip('المتوقَّع', error.expectedPh!, AppColors.success),
-                  if (error.predictedPh != null)
+                  if (error.predictedPh != null && error.predictedPh!.isNotEmpty)
                     _phChip('الفعلي', error.predictedPh!, AppColors.destructive),
                 ],
               ),
