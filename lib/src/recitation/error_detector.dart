@@ -1,275 +1,292 @@
-/// كشّاف أخطاء التجويد المُحسَّن (Group-Based).
+/// كشّاف أخطاء التجويد — مُطابق لِخادم quran-muaalem.
 ///
-/// الطبقة 3 المُحسَّنة: تستخدم عمليّات المحاذاة الجماعيّة (GroupAlignOp)
-/// لِكشف الأخطاء بِشكل يُطابق خادم quran-muaalem.
-///
-/// يُصنّف الأخطاء إلى:
-/// - **tajweed (count)**: خطأ في طول المدّ (مثلاً مدّ 2 بدل 4).
-/// - **tajweed (sifa)**: خطأ في صفة الحرف (تفخيم/قلقلة/غُنّة).
-/// - **normal**: خطأ في الحرف نفسه (استبدال حرف بِآخر).
-/// - **tashkeel**: خطأ في الحركة (فتحة/ضمّة/كسرة).
+/// يُحاكي منطق `quran_transcript.phonetics.error_explainer.explain_error`:
+/// لِكلّ عمليّة محاذاة جماعيّة، يُصنّف الخطأ وفق الفروع الخمسة للخادم:
+///   1. `insert`  → normal/insert (حرف زائد)
+///   2. `delete`  → tajweed إن كان لِلحرف قاعدة، وإلاّ normal
+///   3. `replace` مَع قاعدة تجويد → tajweed/replace + ref/replaced rules + lens
+///   4. `replace` بِلا قاعدة → normal/replace
+///   5. `match`   → tajweed/replace (فرق مدّ أو match rule) أو tashkeel
 library;
 
 import 'package:quran_audio/src/recitation/models/recitation_result.dart';
 import 'package:quran_audio/src/recitation/phoneme_aligner.dart';
 import 'package:quran_audio/src/recitation/quran_phoneme_db.dart';
 
-/// أسماء رؤوس الصفات الـ10.
-const _sifatHeadNames = [
-  'hams_or_jahr',
-  'shidda_or_rakhawa',
-  'tafkheem_or_taqeeq',
-  'itbaq',
-  'safeer',
-  'qalqla',
-  'tikraar',
-  'tafashie',
-  'istitala',
-  'ghonna',
-];
-
-/// أسماء الصفات بالعربية.
-const _sifatNameAr = {
-  'hams_or_jahr': 'الهمس والجهر',
-  'shidda_or_rakhawa': 'الشدّة والرخاوة',
-  'tafkheem_or_taqeeq': 'التفخيم والترقيق',
-  'itbaq': 'الإطباق',
-  'safeer': 'الصفير',
-  'qalqla': 'القلقلة',
-  'tikraar': 'التكرار (الراء)',
-  'tafashie': 'التفشّي',
-  'istitala': 'الاستطالة (الضاد)',
-  'ghonna': 'الغُنّة',
-};
-
-/// معرّفات الحركات (فتحة/ضمّة/كسرة/sukun) — من vocab_official.json.
-const _harakatIds = {32, 33, 34, 36, 35}; // َ ُ ِ ـ ۪
-
-/// خريطة id → رمز عربي (لِـ expectedPh/predictedPh).
+/// خريطة id → رمز عربي.
 typedef PhonemeIdMap = Map<int, String>;
 
 /// يبني أخطاء تجويد غنية من عمليّات المحاذاة الجماعيّة.
 ///
 /// [ops] قائمة عمليّات المجموعات من alignGroups().
-/// [sifatPerPhoneme] صفات كلّ فونيم متوقَّع (من النموذج، مفهرّس بِـ predIdx).
-/// [referenceVerse] الآية المرجعيّة (لِـ sifat المرجعية + النصّ).
+/// [referenceVerse] الآية المرجعيّة (لِـ قواعد التجويد + خريطة uthmani + النصّ).
 /// [phonemeIdToToken] خريطة id → رمز (من vocab).
 List<RecitationError> buildErrorsFromAlignment({
   required List<GroupAlignOp> ops,
-  required List<List<int>> sifatPerPhoneme,
   required ReferenceVerse referenceVerse,
   required PhonemeIdMap phonemeIdToToken,
 }) {
   final errors = <RecitationError>[];
 
   for (final op in ops) {
-    if (op.type == 'match') {
-      // حتى في التطابق، قد يختلف طول المدّ أو الصفة
-      _checkMatchErrors(op, errors, sifatPerPhoneme, referenceVerse,
-          phonemeIdToToken);
-      continue;
-    }
-
-    // إدراج: حرف زائد
-    if (op.type == 'insert') {
-      final predId = op.predGroup!.baseId;
-      errors.add(RecitationError(
-        errorType: _harakatIds.contains(predId) ? 'tashkeel' : 'normal',
-        speechErrorType: 'insert',
-        phPos: [op.predGroup!.startIdx, op.predGroup!.endIdx],
-        predictedPh: phonemeIdToToken[predId],
-      ));
-      continue;
-    }
-
-    // حذف: حرف مفقود
-    if (op.type == 'delete') {
-      final refId = op.refGroup!.baseId;
-      errors.add(RecitationError(
-        errorType: _harakatIds.contains(refId) ? 'tashkeel' : 'normal',
-        speechErrorType: 'delete',
-        phPos: [op.refGroup!.startIdx, op.refGroup!.endIdx],
-        expectedPh: phonemeIdToToken[refId],
-      ));
-      continue;
-    }
-
-    // استبدال: حرف مختلف
-    if (op.type == 'replace') {
-      _checkReplaceError(op, errors, sifatPerPhoneme, referenceVerse,
-          phonemeIdToToken);
+    switch (op.type) {
+      case 'match':
+        _handleMatch(op, errors, referenceVerse, phonemeIdToToken);
+        break;
+      case 'insert':
+        _handleInsert(op, errors, referenceVerse, phonemeIdToToken);
+        break;
+      case 'delete':
+        _handleDelete(op, errors, referenceVerse, phonemeIdToToken);
+        break;
+      case 'replace':
+        _handleReplace(op, errors, referenceVerse, phonemeIdToToken);
+        break;
     }
   }
 
   return errors;
 }
 
-/// يفحص مجموعة متطابقة (match) لِكشف أخطاء المدود والصفات.
-void _checkMatchErrors(
+/// موضع عثمانيّ لِمجموعة مرجعيّة [start, end) من خريطة phonemeToUthmani.
+List<int> _uthmaniPosForRefGroup(PhonemeGroup g, ReferenceVerse ref) {
+  final pm = ref.phonemeToUthmani;
+  if (pm.isEmpty) return const [0, 0];
+  final start = pm[g.startIdx] ?? 0;
+  final lastPh = g.endIdx - 1;
+  final end = (pm[lastPh] ?? start) + 1;
+  return [start, end];
+}
+
+/// موضع عثمانيّ تقريبيّ لِـ insert (مربوط بِأقرب مرجع).
+List<int> _uthmaniPosForInsert(GroupAlignOp op, ReferenceVerse ref) {
+  // insert ليس لَه refGroup — استخدم zero-width (مثل الخادم لِـ insert).
+  return const [0, 0];
+}
+
+// ═══════════════════════ الفروع الخمسة (مثل explain_error) ═══════════════════════
+
+/// فرع `match`: المجموعتان متطابقتان في baseId لكن قد تختلفان في الطول/الحركة.
+void _handleMatch(
   GroupAlignOp op,
   List<RecitationError> errors,
-  List<List<int>> sifatPerPhoneme,
-  ReferenceVerse referenceVerse,
-  PhonemeIdMap phonemeIdToToken,
+  ReferenceVerse ref,
+  PhonemeIdMap idToToken,
 ) {
   final refG = op.refGroup!;
   final predG = op.predGroup!;
 
-  // 1) خطأ في طول المدّ
-  if (refG.isMadd || predG.isMadd) {
-    if (refG.length != predG.length) {
-      errors.add(RecitationError(
-        errorType: 'tajweed',
-        speechErrorType: 'replace',
-        phPos: [predG.startIdx, predG.endIdx],
-        expectedPh: phonemeIdToToken[refG.baseId],
-        predictedPh: phonemeIdToToken[predG.baseId],
-        expectedLen: refG.length,
-        predictedLen: predG.length,
-        refTajweedRules: [
-          TajweedRule(
-            nameAr: 'مدّ',
-            nameEn: 'madd',
-            goldenLen: refG.length,
-            correctnessType: 'count',
-          ),
-        ],
-      ));
-      return; // خطأ مدّ مُكتشف، لا حاجة لِفحص الصفات
-    }
-  }
+  // إن كانتا متطابقتين تماماً (نفس الفونيمات) → لا خطأ (مثل الخادم: `...`).
+  if (_groupsEqual(refG, predG)) return;
 
-  // 2) خطأ في الصفات (إن كانت المجموعة في المرجع).
-  //    نُفحص الصفات فقط لِلسواكن/الحروف الصحيحة — الحركات (harakat) لا
-  //    تحمل صفات تجويد ذات معنى، وَرؤوس الصفات على الحركات تكون ضوضاء.
-  //    هذا يُطابق سلوك الخادم الّذي يُنتج أخطاء صفات فقط على الحروف.
-  //
-  //    We only check sifat for consonants, not for harakat (vowels have no
-  //    meaningful sifa, and sifa heads on harakat are noise). This matches
-  //    the server, which only emits sifa errors on letters.
-  if (!_harakatIds.contains(refG.baseId) &&
-      refG.startIdx < referenceVerse.sifat.length) {
-    final refSifat = referenceVerse.sifat[refG.startIdx];
-    final predIdx = predG.startIdx;
-    if (predIdx < sifatPerPhoneme.length) {
-      final predSifat = sifatPerPhoneme[predIdx];
-      _checkSifatDiff(
-        refSifat: refSifat,
-        predSifat: predSifat,
-        phPos: [predG.startIdx, predG.endIdx],
-        errors: errors,
-      );
+  final uthmaniPos = _uthmaniPosForRefGroup(refG, ref);
+  final phPos = [predG.startIdx, predG.endIdx];
+  final refRules = _refRulesForGroup(refG, ref);
+
+  if (refRules.isNotEmpty) {
+    // فرع الخادم (line 367-411): لِكلّ قاعدة تجويد، تحقّق.
+    for (final rule in refRules) {
+      final ct = rule.correctnessType ?? '';
+      if (ct == 'count') {
+        // مدّ: قارن الطول.
+        final expLen = rule.goldenLen ?? refG.length;
+        final predLen = predG.length;
+        if (expLen != predLen) {
+          errors.add(RecitationError(
+            errorType: 'tajweed',
+            speechErrorType: 'replace',
+            uthmaniPos: uthmaniPos,
+            phPos: phPos,
+            expectedPh: _groupToken(refG, idToToken),
+            predictedPh: _groupToken(predG, idToToken),
+            expectedLen: expLen,
+            predictedLen: predLen,
+            refTajweedRules: [rule],
+          ));
+        }
+      } else if (ct == 'match') {
+        // قاعدة bool (قلقلة/غُنّة): هل تطابقت؟
+        // لا نملك معلومات كافية هنا على الـoffline لِلحكم، فنُخطّي (لا false
+        // positive). الخادم يفحص بِـ taj_rule.match(ref_ph, pred_ph).
+      }
     }
+    // فرع الحركة الزائدة (line 400-411): إن انتهت المرجع بحركة واختلفت.
+    if (harakatIds.contains(refG.lastId) && refG.lastId != predG.lastId) {
+      errors.add(_tashkeelError(refG, predG, uthmaniPos, phPos, idToToken));
+    }
+  } else if (harakatIds.contains(refG.lastId)) {
+    // فرع الخادم (line 414-422): فرق في الحركة فقط → tashkeel.
+    errors.add(_tashkeelError(refG, predG, uthmaniPos, phPos, idToToken));
+  } else {
+    // فرع الخادم (line 429-445): حرف ساكن مختلف.
+    // إن انتهى المتوقَّع بِحركة → tashkeel، وإلاّ → normal.
+    final isTashkeel = harakatIds.contains(predG.lastId);
+    errors.add(RecitationError(
+      errorType: isTashkeel ? 'tashkeel' : 'normal',
+      speechErrorType: 'insert', // مثل الخادم line 441
+      uthmaniPos: uthmaniPos,
+      phPos: phPos,
+      expectedPh: _groupToken(refG, idToToken),
+      predictedPh: _groupToken(predG, idToToken),
+    ));
   }
 }
 
-/// يفحص مجموعة مستبدلة (replace) لِتصنيف الخطأ بدقّة.
-void _checkReplaceError(
+/// فرع `insert`: حرف زائد.
+void _handleInsert(
   GroupAlignOp op,
   List<RecitationError> errors,
-  List<List<int>> sifatPerPhoneme,
-  ReferenceVerse referenceVerse,
-  PhonemeIdMap phonemeIdToToken,
+  ReferenceVerse ref,
+  PhonemeIdMap idToToken,
 ) {
-  final refG = op.refGroup!;
   final predG = op.predGroup!;
-  final refId = refG.baseId;
-  final predId = predG.baseId;
-
-  // هل الفرق في الحركة فقط (tashkeel)؟
-  final refIsHaraka = _harakatIds.contains(refId);
-  final predIsHaraka = _harakatIds.contains(predId);
-  if (refIsHaraka || predIsHaraka) {
-    errors.add(RecitationError(
-      errorType: 'tashkeel',
-      speechErrorType: 'replace',
-      phPos: [predG.startIdx, predG.endIdx],
-      expectedPh: phonemeIdToToken[refId],
-      predictedPh: phonemeIdToToken[predId],
-    ));
-    return;
-  }
-
-  // هل الفرق في الحرف نفسه لكنّ الصفات مختلفة (tajweed/sifa)؟
-  // هذا يحدث نادراً في الاستبدال، لكنّه ممكن (مثلاً تاء بدل طاء).
-  if (refG.startIdx < referenceVerse.sifat.length &&
-      predG.startIdx < sifatPerPhoneme.length) {
-    final refSifat = referenceVerse.sifat[refG.startIdx];
-    final predSifat = sifatPerPhoneme[predG.startIdx];
-    if (_sifatDiffers(refSifat, predSifat)) {
-      _checkSifatDiff(
-        refSifat: refSifat,
-        predSifat: predSifat,
-        phPos: [predG.startIdx, predG.endIdx],
-        errors: errors,
-        expectedPh: phonemeIdToToken[refId],
-        predictedPh: phonemeIdToToken[predId],
-      );
-      return;
-    }
-  }
-
-  // خلاف ذلك: خطأ نطق عاديّ (حرف مختلف)
+  final uthmaniPos = _uthmaniPosForInsert(op, ref);
+  final phPos = [predG.startIdx, predG.endIdx];
   errors.add(RecitationError(
-    errorType: 'normal',
-    speechErrorType: 'replace',
-    phPos: [predG.startIdx, predG.endIdx],
-    expectedPh: phonemeIdToToken[refId],
-    predictedPh: phonemeIdToToken[predId],
+    errorType: 'normal', // مثل الخادم line 294
+    speechErrorType: 'insert',
+    uthmaniPos: uthmaniPos,
+    phPos: phPos,
+    expectedPh: '',
+    predictedPh: _groupToken(predG, idToToken),
   ));
 }
 
-/// يفحص اختلاف الصفات ويُضيف خطأً **واحداً** يجمع كلّ الصفات المختلفة.
-///
-/// بدل إنشاء خطأ منفصل لِكلّ رأس صفة (مما يُنتج عشرات الأخطاء لِكلّ
-/// فونيم)، نجمع كلّ الصفات المختلفة في خطأ تجويد واحد بِقائمة
-/// TajweedRule. هذا يُطابق سلوك الخادم: بطاقة خطأ واحدة لِكلّ حرف.
-///
-/// Instead of one error per sifa head (which explodes to dozens of errors
-/// per phoneme), aggregate all differing sifat into ONE tajweed error with
-/// a list of TajweedRules. This matches the server: one error card per
-/// letter.
-void _checkSifatDiff({
-  required List<int> refSifat,
-  required List<int> predSifat,
-  required List<int> phPos,
-  required List<RecitationError> errors,
-  String? expectedPh,
-  String? predictedPh,
-}) {
-  final rules = <TajweedRule>[];
-  for (var h = 0; h < _sifatHeadNames.length; h++) {
-    if (h >= refSifat.length || h >= predSifat.length) break;
-    // refSifat[h]=0 يعني "لا تنطبق" (الصفة غير مُعرَّفة لِهذا الحرف).
-    // تجاهلها — لا نُناشد المستخدم على صفة غير ذات صلة.
-    if (refSifat[h] == 0) continue;
-    if (refSifat[h] != predSifat[h]) {
-      final headName = _sifatHeadNames[h];
-      rules.add(TajweedRule(
-        nameAr: _sifatNameAr[headName] ?? headName,
-        nameEn: headName,
-        correctnessType: 'sifa',
+/// فرع `delete`: حرف مفقود.
+void _handleDelete(
+  GroupAlignOp op,
+  List<RecitationError> errors,
+  ReferenceVerse ref,
+  PhonemeIdMap idToToken,
+) {
+  final refG = op.refGroup!;
+  final uthmaniPos = _uthmaniPosForRefGroup(refG, ref);
+  final phPos = [refG.startIdx, refG.endIdx];
+  // مثل الخادم line 359-361: tajweed إن كان لِلحرف قاعدة، وإلاّ normal.
+  final refRules = _refRulesForGroup(refG, ref);
+  final isTajweed = refRules.isNotEmpty;
+  errors.add(RecitationError(
+    errorType: isTajweed ? 'tajweed' : 'normal',
+    speechErrorType: 'delete',
+    uthmaniPos: uthmaniPos,
+    phPos: phPos,
+    expectedPh: _groupToken(refG, idToToken),
+    predictedPh: '',
+    refTajweedRules: isTajweed ? refRules : const [],
+  ));
+}
+
+/// فرع `replace`: استبدال.
+void _handleReplace(
+  GroupAlignOp op,
+  List<RecitationError> errors,
+  ReferenceVerse ref,
+  PhonemeIdMap idToToken,
+) {
+  final refG = op.refGroup!;
+  final predG = op.predGroup!;
+  final uthmaniPos = _uthmaniPosForRefGroup(refG, ref);
+  final phPos = [predG.startIdx, predG.endIdx];
+  final refRules = _refRulesForGroup(refG, ref);
+
+  if (refRules.isNotEmpty) {
+    // فرع الخادم (line 301-339): لِكلّ قاعدة، tajweed/replace.
+    for (final rule in refRules) {
+      final ct = rule.correctnessType ?? '';
+      int? expLen;
+      int? predLen;
+      if (ct == 'count') {
+        expLen = rule.goldenLen ?? refG.length;
+        predLen = predG.length;
+      }
+      errors.add(RecitationError(
+        errorType: 'tajweed',
+        speechErrorType: 'replace',
+        uthmaniPos: uthmaniPos,
+        phPos: phPos,
+        expectedPh: _groupToken(refG, idToToken),
+        predictedPh: _groupToken(predG, idToToken),
+        expectedLen: expLen,
+        predictedLen: predLen,
+        refTajweedRules: [rule],
       ));
     }
-  }
-  if (rules.isNotEmpty) {
+  } else {
+    // فرع الخادم (line 342-352): لا قاعدة → normal/replace.
     errors.add(RecitationError(
-      errorType: 'tajweed',
+      errorType: 'normal',
       speechErrorType: 'replace',
+      uthmaniPos: uthmaniPos,
       phPos: phPos,
-      expectedPh: expectedPh,
-      predictedPh: predictedPh,
-      refTajweedRules: rules,
+      expectedPh: _groupToken(refG, idToToken),
+      predictedPh: _groupToken(predG, idToToken),
     ));
   }
 }
 
-/// هل تختلف الصفات بين مرجعي ومتوقَّع؟
-bool _sifatDiffers(List<int>? ref, List<int>? pred) {
-  if (ref == null || pred == null) return false;
-  final len = ref.length < pred.length ? ref.length : pred.length;
-  for (var i = 0; i < len; i++) {
-    if (ref[i] != pred[i] && ref[i] != 0) return true;
+// ═══════════════════════ أدوات مساعدة ═══════════════════════
+
+/// هل المجموعتان متطابقتان تماماً (نفس الفونيمات بنفس الترتيب)؟
+bool _groupsEqual(PhonemeGroup a, PhonemeGroup b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a.ids[i] != b.ids[i]) return false;
   }
-  return false;
+  return true;
+}
+
+/// يحوّل مجموعة إلى رمز نصّي (مثل "اا" أو "بِ").
+String _groupToken(PhonemeGroup g, PhonemeIdMap idToToken) {
+  return g.ids.map((id) => idToToken[id] ?? '?').join();
+}
+
+/// يبني خطأ tashkeel (مثل `get_tasshkeel_error` الخادم).
+///
+/// `speech_error_type` يعتمد على الطول:
+/// - pred أطول → insert
+/// - pred أقصر → delete
+/// - متساوٍ → replace
+RecitationError _tashkeelError(
+  PhonemeGroup refG,
+  PhonemeGroup predG,
+  List<int> uthmaniPos,
+  List<int> phPos,
+  PhonemeIdMap idToToken,
+) {
+  final String spTp;
+  if (predG.length > refG.length) {
+    spTp = 'insert';
+  } else if (predG.length < refG.length) {
+    spTp = 'delete';
+  } else {
+    spTp = 'replace';
+  }
+  return RecitationError(
+    errorType: 'tashkeel',
+    speechErrorType: spTp,
+    uthmaniPos: uthmaniPos,
+    phPos: phPos,
+    expectedPh: _groupToken(refG, idToToken),
+    predictedPh: _groupToken(predG, idToToken),
+  );
+}
+
+/// يجمع قواعد التجويد المرجعيّة لِكلّ الفونيمات في مجموعة مرجعيّة.
+///
+/// مثل `get_ref_phonetic_groups_tajweed_rules` في الخادم: نجمع قواعد كلّ
+/// الفونيمات في المجموعة (بِدون تكرار لِنفس موضع uthmani).
+List<TajweedRule> _refRulesForGroup(PhonemeGroup g, ReferenceVerse ref) {
+  final all = <TajweedRule>[];
+  final tr = ref.tajweedRulesPerPhoneme;
+  for (var i = g.startIdx; i < g.endIdx && i < tr.length; i++) {
+    all.addAll(tr[i]);
+  }
+  // أزِل التكرار بِـ nameEn (مجموعة قد تمتدّ فونيمات متعدّدة لِنفس الحرف).
+  final seen = <String>{};
+  return all.where((r) {
+    final key = r.nameEn;
+    if (seen.contains(key)) return false;
+    seen.add(key);
+    return true;
+  }).toList(growable: false);
 }

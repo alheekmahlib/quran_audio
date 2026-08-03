@@ -198,39 +198,13 @@ class OnnxRecitationEngine implements RecitationEngine {
       vocabJson = await rootBundle.loadString('assets/models/vocab_official.json');
     }
     _vocab = jsonDecode(vocabJson) as Map<String, dynamic>;
-    // ابنِ خريطة id → token لِكلّ رأس
+    // ابنِ خريطة id → token لِرأس phonemes.
     final phonemes = _vocab['phonemes'] as Map<String, dynamic>;
     _phonemeIdToToken = {
       for (final entry in phonemes.entries)
         (entry.value as num).toInt(): entry.key,
     };
-    // خريطة لِرؤوس الصفات (id → token عربي بِأقواس)
-    _sifatIdToToken = {};
-    for (final head in _sifatHeadNames) {
-      final headVocab = _vocab[head] as Map<String, dynamic>?;
-      if (headVocab == null) continue;
-      _sifatIdToToken[head] = {
-        for (final e in headVocab.entries) (e.value as num).toInt(): e.key,
-      };
-    }
   }
-
-  /// أسماء رؤوس الصفات الـ10 (تُطابق vocab_official.json).
-  static const _sifatHeadNames = [
-    'hams_or_jahr',
-    'shidda_or_rakhawa',
-    'tafkheem_or_taqeeq',
-    'itbaq',
-    'safeer',
-    'qalqla',
-    'tikraar',
-    'tafashie',
-    'istitala',
-    'ghonna',
-  ];
-
-  /// خريطة head → {id → token عربي}.
-  Map<String, Map<int, String>> _sifatIdToToken = {};
 
   // ── العقد (RecitationEngine) ─────────────────────────────────
 
@@ -370,15 +344,12 @@ class OnnxRecitationEngine implements RecitationEngine {
         '$predictedPhonemes',
         name: 'OnnxEngine');
 
-    // 4) فكّ ترميز رؤوس الصفات عند مواضع الفونيمات المتوقَّعة
-    final sifatPerPhoneme = _decodeSifatAtPhonemes(outputs, decodeResult);
-
-    // 5) المسار الكامل: إن أُعطي suraIdx/ayaIdx وَالـDB محمّلة،
-    //    استخدم المحاذاة الجماعيّة + كشّاف الأخطاء المُحسَّن.
+    // 4) المسار الكامل: إن أُعطي suraIdx/ayaIdx وَالـDB محمّلة،
+    //    استخدم المحاذاة الجماعيّة + كشّاف الأخطاء المُطابق لِـ الخادم.
     if (suraIdx != null && ayaIdx != null && _quranDb.isLoaded) {
       final ref = _quranDb.getReference(suraIdx: suraIdx, ayaIdx: ayaIdx);
       if (ref != null) {
-        // الطبقة 2 (مُحسَّنة): تجميع المدود + محاذاة جماعيّة.
+        // تجميع المدود + محاذاة جماعيّة (مثل chunck_phonemes + Levenshtein).
         final refGroups = chunkPhonemes(ref.phonemeIds);
         final predGroups = chunkPhonemes(phonemeIds);
         final ops = alignGroups(refGroups, predGroups);
@@ -394,17 +365,22 @@ class OnnxRecitationEngine implements RecitationEngine {
             predictedPhonemes: predictedPhonemes,
             noMatchMessage:
                 'لم يتمكّن النموذج من التعرّف على التلاوة. حاول مرّة أخرى '
-                'بِالتحدّث بِوضوح أقرب من الميكروفون.',
+                'بِالتحدّث بِـوضوح أقرب من الميكروفون.',
           );
         }
 
-        // الطبقة 3 (مُحسَّنة): كشّاف الأخطاء الجماعيّ.
+        // كشّاف الأخطاء الجماعيّ (مُطابق لِـ explain_error الخادم).
         final errors = buildErrorsFromAlignment(
           ops: ops,
-          sifatPerPhoneme: _sifatMapsToInts(sifatPerPhoneme),
           referenceVerse: ref,
           phonemeIdToToken: _phonemeIdToToken,
         );
+
+        log('OnnxRecitationEngine: errors → ${errors.length} '
+            '(tajweed=${errors.where((e) => e.errorType == "tajweed").length}, '
+            'normal=${errors.where((e) => e.errorType == "normal").length}, '
+            'tashkeel=${errors.where((e) => e.errorType == "tashkeel").length})',
+            name: 'OnnxEngine');
 
         return RecitationResult(
           uthmaniText: ref.uthmani,
@@ -419,51 +395,18 @@ class OnnxRecitationEngine implements RecitationEngine {
           name: 'OnnxEngine', level: 900);
     }
 
-    // 6) المسار البسيط: صفات مُجمّعة فقط (بدون DB)
-    final sifatErrors = _buildSifatErrorsRich(sifatPerPhoneme);
-
+    // 5) مسار بسيط: لا DB → أعد الفونيمات فقط (بدون أخطاء مُلفّقة).
     if (referenceText != null && referenceText.isNotEmpty) {
       return RecitationResult(
         uthmaniText: referenceText,
         predictedPhonemes: predictedPhonemes,
         referencePhonemes: referenceText,
-        errors: sifatErrors,
       );
     }
 
     return RecitationResult(
       predictedPhonemes: predictedPhonemes,
-      errors: sifatErrors,
     );
-  }
-
-  /// يحوّل sifatPerPhoneme (Map<String,String>) → List<List<int>> (IDs)
-  /// لِـ التمرير لِـ buildErrorsFromAlignment.
-  List<List<int>> _sifatMapsToInts(List<Map<String, String>> sifatMaps) {
-    return sifatMaps.map((m) {
-      // نُحوّل token عربي → id لِكلّ رأس
-      final row = <int>[];
-      for (final head in _sifatHeadNames) {
-        final token = m[head];
-        if (token == null) {
-          row.add(0); // PAD
-        } else {
-          // ابحث عن id المطابق في _sifatIdToToken (معكوس)
-          final idMap = _sifatIdToToken[head];
-          int id = 0;
-          if (idMap != null) {
-            for (final e in idMap.entries) {
-              if (e.value == token) {
-                id = e.key;
-                break;
-              }
-            }
-          }
-          row.add(id);
-        }
-      }
-      return row;
-    }).toList(growable: false);
   }
 
   @override
@@ -580,152 +523,6 @@ class OnnxRecitationEngine implements RecitationEngine {
     }
 
     return _CtcDecodeResult(ids: ids, frameSpans: spans);
-  }
-
-  /// يفكّ ترميز رؤوس الصفات الـ10 عند موضع كلّ فونيم متوقَّع.
-  ///
-  /// يُعيد لِكلّ فونيم: قائمة بِـ {head: token} (صفات ذلك الفونيم).
-  List<Map<String, String>> _decodeSifatAtPhonemes(
-    final Map<String, Float32List> outputs,
-    final _CtcDecodeResult decode,
-  ) {
-    // خريطة اسم الرأس في النموذج → اسم الرأس في vocab
-    const outputToVocab = {
-      'logits_1_hams_or_jahr': 'hams_or_jahr',
-      'logits_2_shidda_or_rakhawa': 'shidda_or_rakhawa',
-      'logits_3_tafkheem_or_taqeeq': 'tafkheem_or_taqeeq',
-      'logits_4_itbaq': 'itbaq',
-      'logits_5_safeer': 'safeer',
-      'logits_6_qalqla': 'qalqla',
-      'logits_7_tikraar': 'tikraar',
-      'logits_8_tafashie': 'tafashie',
-      'logits_9_istitala': 'istitala',
-      'logits_10_ghonna': 'ghonna',
-    };
-
-    final result = <Map<String, String>>[];
-    for (var p = 0; p < decode.ids.length; p++) {
-      final span = decode.frameSpans[p];
-      final midFrame = (span.startFrame + span.endFrame) ~/ 2;
-      final sifat = <String, String>{};
-
-      for (final entry in outputToVocab.entries) {
-        final logits = outputs[entry.key];
-        if (logits == null) continue;
-        final vocabName = entry.value;
-        final headVocab = _vocab[vocabName] as Map<String, dynamic>?;
-        if (headVocab == null) continue;
-        final vocabSize = headVocab.length;
-        if (midFrame * vocabSize + vocabSize > logits.length) continue;
-
-        // argmax عند الإطار الأوسط
-        int bestId = 0;
-        double bestVal = logits[midFrame * vocabSize];
-        for (int v = 1; v < vocabSize; v++) {
-          final val = logits[midFrame * vocabSize + v];
-          if (val > bestVal) {
-            bestVal = val;
-            bestId = v;
-          }
-        }
-        // حوّل id → token عربي
-        if (bestId != 0) {
-          final token = _sifatIdToToken[vocabName]?[bestId];
-          if (token != null) {
-            sifat[vocabName] = token;
-          }
-        }
-      }
-      result.add(sifat);
-    }
-    return result;
-  }
-
-  /// يبني أخطاء تجويد غنية من الصفات المُكتشَفة.
-  ///
-  /// **يُنتج خطأً مستقلاً لِكلّ موضع** (مثل الخادم تماماً) بدل تجميع كلّ
-  /// الصفات في خطأ واحد. كلّ خطأ يحوي اسم القاعدة النظيف + القيم المتوقَّعة
-  /// والفعليّة لِتُعرض كَـ شارات خضراء/حمراء في الـ UI.
-  ///
-  /// Produces a separate error per position (exactly like the server) instead
-  /// of aggregating all attributes into one error. Each error carries the clean
-  /// rule name + expected/actual values to render as green/red chips.
-  List<RecitationError> _buildSifatErrorsRich(
-    final List<Map<String, String>> sifatPerPhoneme, {
-    final String? referenceText,
-    final int totalPhonemes = 0,
-  }) {
-    // قاموس رأس الصفة → (اسم عربي نظيف، اسم إنجليزي، القيمة المتوقَّعة).
-    // القيمة المتوقَّعة هنا تمثّل "السليم" الافتراضي لِكلّ صفة — تُستخدم
-    // كَـ expectedPh في الـ UI.
-    // Head → (clean Arabic name, English key, expected value).
-    const sifatMeta = <String, (String, String, String)>{
-      'hams_or_jahr': ('الهمس والجهر', 'hams_or_jahr', '[سليم]'),
-      'shidda_or_rakhawa': ('الشدّة والرخاوة', 'shidda_or_rakhawa', '[سليم]'),
-      'tafkheem_or_taqeeq': ('التفخيم والترقيق', 'tafkheem_or_taqeeq', '[سليم]'),
-      'itbaq': ('الإطباق', 'itbaq', '[سليم]'),
-      'safeer': ('الصفير', 'safeer', '[سليم]'),
-      'qalqla': ('القلقلة', 'qalqla', '[سليم]'),
-      'tikraar': ('التكرار (الراء)', 'tikraar', '[سليم]'),
-      'tafashie': ('التفشّي', 'tafashie', '[سليم]'),
-      'istitala': ('الاستطالة (الضاد)', 'istitala', '[سليم]'),
-      'ghonna': ('الغُنّة', 'ghonna', '[سليم]'),
-    };
-
-    // قسّم النصّ المرجعي لِكلمات (لِتقدير الكلمة المتأثّرة بِكلّ فونيم).
-    // Split the reference text into words (to estimate the affected word).
-    final refWords = (referenceText == null || referenceText.isEmpty)
-        ? const <String>[]
-        : referenceText.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-
-    final errors = <RecitationError>[];
-    for (var p = 0; p < sifatPerPhoneme.length; p++) {
-      final sifat = sifatPerPhoneme[p];
-      for (final entry in sifat.entries) {
-        final headName = entry.key;
-        final token = entry.value; // مثل "[مقلقل]" أو "[لا قلقلة]"
-        // تخطّي الصفات "السلبية" (السليمة) مثل "[لا قلقلة]".
-        // Skip "negative" (correct) attributes like "[no qalqla]".
-        if (token.contains('لا ')) continue;
-        final meta = sifatMeta[headName];
-        if (meta == null) continue;
-
-        // قدّر الكلمة المتأثّرة نسبيّاً: موضع الفونيم / إجمالي الفونيمات ×
-        // عدد الكلمات المرجعية. تقدير تقريبي لكنّه مفيد لِلعرض.
-        // Estimate the affected word relatively: phoneme position / total
-        // phonemes × reference word count. Approximate but useful for display.
-        String? wordText;
-        if (refWords.isNotEmpty && totalPhonemes > 0) {
-          final wordIdx = (p / totalPhonemes * refWords.length).floor();
-          wordText = refWords[wordIdx.clamp(0, refWords.length - 1)];
-        }
-
-        // خطأ مستقل لِكلّ موضع — يطابق هيكل الخادم.
-        // Separate error per position — matches the server's structure.
-        errors.add(RecitationError(
-          errorType: 'tajweed',
-          speechErrorType: 'sifa', // نوع خاص: لا يُفعّل فرع الأطوال في description.
-          uthmaniPos: [p, p + 1], // موضع تقريبي في الفونيمات.
-          phPos: [p, p + 1],
-          expectedPh: meta.$3, // القيمة المتوقَّعة (السليمة).
-          predictedPh: token, // ما اكتُشف فعلاً.
-          wordText: wordText, // الكلمة المتأثّرة (تقدير نسبي).
-          refTajweedRules: [
-            TajweedRule(
-              nameAr: meta.$1, // اسم نظيف: 'القلقلة'.
-              nameEn: meta.$2,
-              correctnessType: 'sifa',
-            ),
-          ],
-        ));
-      }
-    }
-
-    // رتّب حسب الموضع (أوّل الآية أولاً) لِعرض منطقي.
-    // Sort by position (start of the ayah first) for logical display.
-    errors.sort((a, b) => a.phPos[0].compareTo(b.phPos[0]));
-
-    return errors;
   }
 }
 

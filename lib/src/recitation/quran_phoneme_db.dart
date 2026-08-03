@@ -1,11 +1,12 @@
-/// قاعدة بيانات الفونيمات المرجعية لِكلّ القرآن (6207 آية).
+/// قاعدة بيانات الفونيمات المرجعية لِكلّ القرآن.
 ///
-/// تُحمَّل من `assets/models/quran_reference.json.gz` (1.4MB مضغوط).
-/// لِكلّ آية (مُعرَّفة بِـ "sura:aya") تُوفّر:
-/// - النصّ العثماني
-/// - سلسلة فونيمات QPS
-/// - معرّفات الفونيمات الرقمية (مطابقة لِـ vocab_official.json)
-/// - 10 صفات تجويد لِكلّ فونيم (مُرمَّزة كَـ IDs)
+/// تُحمَّل من `assets/models/quran_reference.json.gz`. لِكلّ آية تُوفّر:
+/// - `u`: النصّ العثماني
+/// - `p`: سلسلة فونيمات QPS
+/// - `pi`: معرّفات الفونيمات الرقمية
+/// - `s`: 10 صفات تجويد لِكلّ **مجموعة فونيمات** (وليس لِكلّ فونيم)
+/// - `tr`: قواعد تجويد غنية لِكلّ فونيم (Madd/Qalqalah/Ghonnah + golden_len)
+/// - `pm`: خريطة phonemeIdx → uthmaniCharIdx (لِـ استخراج wordText)
 ///
 /// تُولَّد بِـ scripts/12_generate_quran_db.py على Python (مرّة واحدة).
 library;
@@ -16,6 +17,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart' show rootBundle;
 
+import 'models/recitation_result.dart' show TajweedRule;
+
 /// بيانات مرجعية لِآية واحدة.
 class ReferenceVerse {
   ReferenceVerse({
@@ -24,6 +27,8 @@ class ReferenceVerse {
     required this.phonemes,
     required this.phonemeIds,
     required this.sifat,
+    required this.tajweedRulesPerPhoneme,
+    required this.phonemeToUthmani,
   });
 
   /// "sura:aya" مثل "1:1".
@@ -38,9 +43,17 @@ class ReferenceVerse {
   /// معرّفات الفونيمات الرقمية (مطابقة لِـ vocab_official.json).
   final List<int> phonemeIds;
 
-  /// 10 صفات تجويد لِكلّ فونيم. البنية: sifat[phonemeIndex][headIndex].
+  /// 10 صفات تجويد لِكلّ **مجموعة** فونيمات. البنية: sifat[groupIdx][headIdx].
   /// headIndex: 0=hams_or_jahr, 1=shidda_or_rakhawa, ..., 9=ghonna.
+  /// ملاحظة: طول هذه القائمة = عدد المجموعات (أقلّ من phonemeIds).
   final List<List<int>> sifat;
+
+  /// قواعد تجويد غنية لِكلّ **فونيم**. البنية: tr[phonemeIdx] = List<TajweedRule>.
+  /// طول هذه القائمة = طول phonemeIds.
+  final List<List<TajweedRule>> tajweedRulesPerPhoneme;
+
+  /// خريطة phonemeIdx → uthmaniCharIdx. تُستخدم لِـ استخراج wordText.
+  final Map<int, int> phonemeToUthmani;
 
   @override
   String toString() =>
@@ -61,9 +74,6 @@ class QuranPhonemeDb {
   int get verseCount => _db.length;
 
   /// حمّل الـDB من asset أو من مسار خارجي.
-  ///
-  /// [assetPath] مسار asset (افتراضي: bundled).
-  /// [filePath] مسار ملفّ خارجي (إن نُزِّل من Release).
   Future<void> load({String? assetPath, String? filePath}) async {
     if (_loaded) return;
 
@@ -92,8 +102,6 @@ class QuranPhonemeDb {
   }
 
   /// ابحث عن آية بِـ suraIdx و ayaIdx (1-based).
-  ///
-  /// يُعيد null إن لم تُوجد (مثل الحروف المقطّعة المفقودة).
   ReferenceVerse? getReference({required int suraIdx, required int ayaIdx}) {
     final key = '$suraIdx:$ayaIdx';
     return getReferenceByKey(key);
@@ -104,59 +112,57 @@ class QuranPhonemeDb {
     final raw = _db[verseKey];
     if (raw == null) return null;
     final m = raw as Map<String, dynamic>;
+
     final phonemeIds = (m['pi'] as List).cast<int>();
     final sifatRaw = (m['s'] as List)
         .map((e) => (e as List).cast<int>())
         .toList(growable: false);
 
-    // الفجوة 1: وسّع sifat لتطابق طول phonemeIds.
-    // الـDB الأصليّ يُخزّن sifat كَـ صفّ لِكلّ حرف عثماني، لكنّ phonemeIds
-    // كَـ صفّ لِكلّ فونيم (وبعض الحروف تُولّد فونيمات متعدّدة). نُوسّع
-    // بِالتوزيع النسبي حتّى يطابق الطول.
-    // Expand sifat to match phonemeIds length. The DB stores sifat per Uthmani
-    // letter, but phonemeIds per phoneme (some letters generate multiple
-    // phonemes). Expand by proportional distribution to match the length.
-    final sifatExpanded = _expandSifatToPhonemes(sifatRaw, phonemeIds.length);
+    // قواعد التجويد لِكلّ فونيم (إن وُجدت في الـDB).
+    final trRaw = m['tr'] as List?;
+    List<List<TajweedRule>> tajweedRules;
+    if (trRaw != null) {
+      tajweedRules = trRaw.map(_parseRules).toList(growable: false);
+    } else {
+      // DB قديم بِلا tr — أعِد قائمة فارغة لِكلّ فونيم.
+      tajweedRules = List.generate(phonemeIds.length, (_) => const <TajweedRule>[]);
+    }
+
+    // خريطة phonemeIdx → uthmaniCharIdx (إن وُجدت في الـDB).
+    final pmRaw = m['pm'];
+    Map<int, int> phonemeToUthmani;
+    if (pmRaw is Map) {
+      phonemeToUthmani = {
+        for (final e in pmRaw.entries) int.parse(e.key): (e.value as num).toInt(),
+      };
+    } else {
+      phonemeToUthmani = const {};
+    }
 
     return ReferenceVerse(
       verseKey: verseKey,
       uthmani: m['u'] as String,
       phonemes: m['p'] as String,
       phonemeIds: phonemeIds,
-      sifat: sifatExpanded,
+      sifat: sifatRaw,
+      tajweedRulesPerPhoneme: tajweedRules,
+      phonemeToUthmani: phonemeToUthmani,
     );
   }
 
-  /// يُوسّع قائمة sifat (عدد الحروف) لتطابق عدد الفونيمات بِالتوزيع النسبي.
-  ///
-  /// [sifat] صفوف sifat الأصليّة (واحد لِكلّ حرف عثماني).
-  /// [targetLen] عدد الفونيمات المطلوب (طول phonemeIds).
-  ///
-  /// يُعيد قائمة بِطول targetLen، حيث يُكرّر كلّ صفّ حسب نسبة فونيماته.
-  List<List<int>> _expandSifatToPhonemes(
-    List<List<int>> sifat,
-    int targetLen,
-  ) {
-    if (sifat.isEmpty || targetLen == 0) return sifat;
-    if (sifat.length >= targetLen) return sifat.sublist(0, targetLen);
-
-    // وزّع targetLen موضعاً على sifat.length صفّاً نسبيّاً.
-    // Distribute targetLen positions across sifat.length rows proportionally.
-    final result = <List<int>>[];
-    final ratio = targetLen / sifat.length;
-    for (var i = 0; i < sifat.length; i++) {
-      // عدد الفونيمات لهذا الحرف ≈ ratio (مع التقريب).
-      final count = (ratio * (i + 1)).round() - (ratio * i).round();
-      final n = count < 1 ? 1 : count;
-      for (var j = 0; j < n && result.length < targetLen; j++) {
-        result.add(sifat[i]);
-      }
-    }
-    // إن نقص (بسبب التقريب)، املأ بِآخر صفّ.
-    while (result.length < targetLen) {
-      result.add(sifat.last);
-    }
-    return result;
+  /// يحوّل قواعد JSON إلى TajweedRule dart.
+  static List<TajweedRule> _parseRules(dynamic rulesList) {
+    if (rulesList is! List || rulesList.isEmpty) return const [];
+    return rulesList.whereType<Map>().map((m) {
+      final mm = Map<String, dynamic>.from(m);
+      return TajweedRule(
+        nameAr: (mm['ar'] as String?) ?? '',
+        nameEn: (mm['en'] as String?) ?? '',
+        goldenLen: (mm['g'] as num?)?.toInt(),
+        correctnessType: mm['ct'] as String?,
+        tag: mm['tag'] as String?,
+      );
+    }).toList(growable: false);
   }
 
   /// هل الآية موجودة في الـDB؟
