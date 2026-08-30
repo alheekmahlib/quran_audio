@@ -247,7 +247,66 @@ class OnnxRecitationEngine implements RecitationEngine {
         'rms=${rms.toStringAsFixed(4)} nonZero=$nonZero',
         name: 'OnnxEngine');
 
-    // 1ب) تطبيع السعة لِمطابقة توزيع بيانات التدريب.
+    // 1ب) قصّ الصمت من البداية والنهاية (VAD trim).
+    //
+    // النموذج يخطئ في أول كلمة عند بدء التسجيل بِـ صمت متدرّج (نمط ASR
+    // معروف: سماع 'ءَ زَ' بدل 'بِ س' في البسملة). القصّ يُغذّي النموذج
+    // الكلام مباشرةً من أوّل صوت مسموع.
+    //
+    // Trim leading/trailing silence so the model hears speech from the very
+    // first frame instead of a fading-in start (fixes first-word errors).
+    final int vadStart;
+    final int vadEnd;
+    final peak = maxV.abs() > minV.abs() ? maxV.abs() : minV.abs();
+    {
+      const windowMs = 100; // نافذة فحص 100ms
+      final win = decoded.sampleRate * windowMs ~/ 1000;
+      final nWin = nSamples ~/ win;
+      if (nWin >= 3 && peak > 1e-6) {
+        // عتبة الطاقة: 8% من ذروة طاقة النوافذ (مُتكيّفة مع كلّ تسجيل).
+        double maxWinE = 0;
+        final winE = Float64List(nWin);
+        for (var w = 0; w < nWin; w++) {
+          double e = 0;
+          for (var i = w * win; i < (w + 1) * win; i++) {
+            e += samples[i] * samples[i];
+          }
+          winE[w] = e;
+          if (e > maxWinE) maxWinE = e;
+        }
+        final thr = maxWinE * 0.08;
+        var first = 0;
+        while (first < nWin && winE[first] < thr) {
+          first++;
+        }
+        var last = nWin - 1;
+        while (last > first && winE[last] < thr) {
+          last--;
+        }
+        // هوامش أمان: أبقِ نافذة قبل/بعد (100ms) لِـ عدم قطع بداية حرف.
+        final startW = first > 0 ? first - 1 : 0;
+        final endW = last < nWin - 1 ? last + 1 : nWin - 1;
+        vadStart = startW * win;
+        vadEnd = (endW + 1) * win > nSamples ? nSamples : (endW + 1) * win;
+      } else {
+        vadStart = 0;
+        vadEnd = nSamples;
+      }
+    }
+    final trimmed = (vadStart == 0 && vadEnd == nSamples)
+        ? samples
+        : Float64List.sublistView(samples, vadStart, vadEnd);
+    final nTrim = trimmed.length;
+    if (nTrim < nSamples) {
+      final trimmedSec = (nSamples - nTrim) / decoded.sampleRate;
+      final finalSec = nTrim / decoded.sampleRate;
+      log('OnnxRecitationEngine: VAD trim '
+          '${nSamples - nTrim} samples (${trimmedSec.toStringAsFixed(2)}s) '
+          '→ $nTrim samples (${finalSec.toStringAsFixed(1)}s)',
+          name: 'OnnxEngine');
+    }
+
+    // 1ج) تطبيع السعة لِمطابقة توزيع بيانات التدريب.
     //
     // النموذج دُرِّب على تسجيلات everyayah النظيفة بِـ RMS ~0.05-0.10 وَpeak
     // ~0.5-0.9. ميكروفون المحاكي (مع autoGain/noiseSuppress) يُنتج صوتاً
@@ -260,17 +319,16 @@ class OnnxRecitationEngine implements RecitationEngine {
     // simulator mic produces very faint audio (RMS ~0.007), so the model
     // treats it as silence. Fix: peak-normalize to 0.7, then boost if RMS
     // is still low.
-    final peak = maxV.abs() > minV.abs() ? maxV.abs() : minV.abs();
     final Float64List normalized;
     if (peak < 1e-6) {
       // صمت تامّ — لا شيء نُطبّقه عليه.
-      normalized = samples;
+      normalized = trimmed;
     } else {
       // Scale لِـ peak = 0.7.
       final scale = 0.7 / peak;
-      normalized = Float64List(nSamples);
-      for (var i = 0; i < nSamples; i++) {
-        normalized[i] = samples[i] * scale;
+      normalized = Float64List(nTrim);
+      for (var i = 0; i < nTrim; i++) {
+        normalized[i] = trimmed[i] * scale;
       }
       // تحقّق: إن كان RMS بعد الـ scaling لا يزال منخفضاً (< 0.03)،
       // ارفعه لِـ 0.06 (نطاق التدريب).
@@ -278,11 +336,11 @@ class OnnxRecitationEngine implements RecitationEngine {
       for (final s in normalized) {
         sumSq2 += s * s;
       }
-      final rms2 = sqrt(sumSq2 / nSamples);
+      final rms2 = sqrt(sumSq2 / nTrim);
       if (rms2 < 0.03) {
         final boost = 0.06 / (rms2 < 1e-6 ? 1e-6 : rms2);
         final cappedBoost = boost > 20.0 ? 20.0 : boost;
-        for (var i = 0; i < nSamples; i++) {
+        for (var i = 0; i < nTrim; i++) {
           var v = normalized[i] * cappedBoost;
           if (v > 1.0) v = 1.0;
           if (v < -1.0) v = -1.0;
