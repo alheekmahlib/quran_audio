@@ -263,7 +263,11 @@ class OnnxRecitationEngine implements RecitationEngine {
       final win = decoded.sampleRate * windowMs ~/ 1000;
       final nWin = nSamples ~/ win;
       if (nWin >= 3 && peak > 1e-6) {
-        // عتبة الطاقة: 8% من ذروة طاقة النوافذ (مُتكيّفة مع كلّ تسجيل).
+        // عتبات مُتكيّفة مع كلّ تسجيل:
+        // - البداية 8%: الضجيج وضغط الزرّ قبل الكلام.
+        // - النهاية 3% + هامش 3 نوافذ: الحرف الأخير (نون/ميم خفيفة عند
+        //   الوقف) طاقته منخفضة بِـ الطبيعة — عتبة البداية نفسها كانت
+        //   تقصّه! (قصّت 4s من تسجيل 7.6s وأسقطت نون «العالمين»).
         double maxWinE = 0;
         final winE = Float64List(nWin);
         for (var w = 0; w < nWin; w++) {
@@ -274,18 +278,21 @@ class OnnxRecitationEngine implements RecitationEngine {
           winE[w] = e;
           if (e > maxWinE) maxWinE = e;
         }
-        final thr = maxWinE * 0.08;
+        final startThr = maxWinE * 0.08;
+        final endThr = maxWinE * 0.03;
         var first = 0;
-        while (first < nWin && winE[first] < thr) {
+        while (first < nWin && winE[first] < startThr) {
           first++;
         }
         var last = nWin - 1;
-        while (last > first && winE[last] < thr) {
+        while (last > first && winE[last] < endThr) {
           last--;
         }
-        // هوامش أمان: أبقِ نافذة قبل/بعد (100ms) لِـ عدم قطع بداية حرف.
+        // هوامش أمان: نافذة قبل البداية، و3 نوافذ (300ms) بعد آخر صوت
+        // خفيف — لِـ عدم قطع الحرف الأخير.
         final startW = first > 0 ? first - 1 : 0;
-        final endW = last < nWin - 1 ? last + 1 : nWin - 1;
+        var endW = last + 3; // 3 نوافذ هامش نهاية
+        if (endW > nWin - 1) endW = nWin - 1;
         vadStart = startW * win;
         vadEnd = (endW + 1) * win > nSamples ? nSamples : (endW + 1) * win;
       } else {

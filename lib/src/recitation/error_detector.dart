@@ -114,7 +114,18 @@ void _handleMatch(
         // مدّ: قارن الطول (عدد الحركات).
         final expLen = rule.goldenLen ?? _maddLength(refG);
         final predLen = _maddLength(predG);
-        if (expLen != predLen) {
+        // تسامح المدّ العارض للسكون: golden>=4 (عارض/لازم) يتحقّق بِـ الوقف
+        // (2-6 حركات بِحسب الرواية) أو الوصل (مدّ طبيعيّ 2). كلّها مشروعة
+        // تجويديّاً — لا نُبلّغ خطأ إلّا لو انعدم المدّ (1) أو أُفرط (>.
+        // golden+2). المدّ الطبيعيّ (golden=2) يبقى صارماً كالسابق.
+        //
+        // Aared-madd tolerance: golden>=4 accepts 2..golden+2 because
+        // connecting (wasl) legally shortens it to a normal madd (2).
+        final isLenientMadd = expLen >= 4;
+        final maddOk = isLenientMadd
+            ? (predLen >= 2 && predLen <= expLen + 2)
+            : (predLen == expLen);
+        if (!maddOk) {
           errors.add(RecitationError(
             errorType: 'tajweed',
             speechErrorType: 'replace',
@@ -183,6 +194,21 @@ void _handleInsert(
   PhonemeIdMap idToToken,
 ) {
   final predG = op.predGroup!;
+
+  // تسامح ضجيج التعرّف: حركة معزولة أو همزة معزولة زائدة = شائع جداً في
+  // مخرجات CTC (مثل كسرة قبل "للَّه" أو "َء" بدل "ال") ولا يُعدّ خطأ تلاوة
+  // جوهريّاً — نتخطّاه كليّاً (الخادم لا يراه أصلاً لأنّ نموذجه أنظف).
+  //
+  // Recognition-noise tolerance: an isolated haraka or isolated hamza
+  // insert is very common CTC noise and not a real recitation error.
+  if (predG.length == 1) {
+    final id = predG.baseId;
+    // id=1 = همزة (ء). الحركات في harakatIds.
+    if (id == 1 || harakatIds.contains(id)) {
+      return; // تجاهل — ليس خطأ.
+    }
+  }
+
   final uthmaniPos = _uthmaniPosForInsert(op, ref);
   final phPos = [predG.startIdx, predG.endIdx];
   // insert ليس لَه موضع مرجعيّ → wordText غير معروف (مثل الخادم).
@@ -245,6 +271,12 @@ void _handleReplace(
       if (ct == 'count') {
         expLen = rule.goldenLen ?? _maddLength(refG);
         predLen = _maddLength(predG);
+        // نفس تسامح المدّ العارض من _handleMatch: golden>=4 يقبل 2..+2
+        // (الوصل مشروع). لو كان المدّ ضمن المدى → لا خطأ هنا أصلاً.
+        final ok = expLen >= 4
+            ? (predLen >= 2 && predLen <= expLen + 2)
+            : (predLen == expLen);
+        if (ok) continue;
       }
       errors.add(RecitationError(
         errorType: 'tajweed',
