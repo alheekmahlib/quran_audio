@@ -230,6 +230,18 @@ void _handleDelete(
   PhonemeIdMap idToToken,
 ) {
   final refG = op.refGroup!;
+
+  // تسامح الحرف الأوّل من الآية: النموذج الصغير يبتلع أوّل حرف من كلّ
+  // تسجيل (باء «بِسْمِ» المهموسة خاصّةً) — ظاهرة نموذج معروفة، لا خطأ
+  // تلاوة (المعلّم 660M لا يُظهرها أصلاً). نتجاهل حذف المجموعة المرجعيّة
+  // الأولى وحدها إن كانت قصيرة (حرف أو حرف+حركة). لا يمسّ غيرها.
+  //
+  // First-group tolerance: the student swallows the very first phoneme of
+  // every recording — a known small-model artifact, not a recitation error.
+  if (refG.startIdx == 0 && refG.length <= 2) {
+    return;
+  }
+
   final uthmaniPos = _uthmaniPosForRefGroup(refG, ref);
   final phPos = [refG.startIdx, refG.endIdx];
   final word = _extractWord(ref.uthmani, uthmaniPos);
